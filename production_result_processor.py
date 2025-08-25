@@ -23,7 +23,7 @@ class ProductionResultProcessor:
         self.logger = optimizer.logger
         self.lines = optimizer.lines
         self.products = optimizer.products
-        self.time_slots = optimizer.time_slots
+        self.time_slots = optimizer.ontology_timeslots
         self.valid_product_line_combinations = optimizer.valid_product_line_combinations
         self.product_instances = optimizer.product_instances
         self.line_instances = optimizer.line_instances

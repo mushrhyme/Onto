@@ -332,12 +332,7 @@ def main():
             constraint_type=ConstraintTypes.START_PRODUCT,
             product='101003557'
         )
-        
-        # constraint_config.add_line_constraint(
-        #     line_id='16',
-        #     constraint_type=ConstraintTypes.FORBIDDEN_COMBINATION,
-        #     forbidden_pairs=[('101003557', '101003563')]
-        # )
+    
         
         # 3. 최적화 모델 구축
         logger.info("=== 3단계: 최적화 모델 구축 ===")
@@ -345,7 +340,7 @@ def main():
         
         # 사용 가능한 라인 중에서 선택 (선택사항)
         available_lines = list(results['lines'].keys())
-        selected_lines = ['16']  # 16호기만 사용
+        selected_lines = ['16'] 
         
         logger.info(f"선택된 라인: {selected_lines}")
         

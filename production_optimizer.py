@@ -1,7 +1,7 @@
 from pulp import *
 import datetime
 import time
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, Tuple, Optional
 import logging
 from ontology.manager import OntologyManager
 import pandas as pd
@@ -73,8 +73,7 @@ class ProductionOptimizer:
         # 활성화할 라인 설정
         self._setup_active_lines(active_lines)
         
-        # 시간 슬롯 생성
-        self.time_slots = self._generate_time_slots()  # ['월요일_조간', '월요일_야간', ...]
+        # 시간 슬롯은 온톨로지 데이터 추출 후에 설정됨 (self.ontology_timeslots)
         
         # 제약조건 가중치
         self.weights = {
@@ -211,6 +210,19 @@ class ProductionOptimizer:
                         self.changeover_rules[line_id] = []
                     self.changeover_rules[line_id].append(rule)
         
+        # TimeSlot 인스턴스 추출 (온톨로지 기반)
+        self.ontology_timeslots = []
+        self.timeslot_instances = {}
+        if hasattr(self.onto, 'TimeSlot'):
+            for timeslot_instance in self.onto.TimeSlot.instances():
+                timeslot_name = timeslot_instance.hasTimeSlotName[0] if timeslot_instance.hasTimeSlotName else timeslot_instance.name
+                self.ontology_timeslots.append(timeslot_name)
+                self.timeslot_instances[timeslot_name] = timeslot_instance
+            self.logger.info(f"✅ 온톨로지에서 TimeSlot 인스턴스 {len(self.ontology_timeslots)}개 추출 완료")
+        else:
+            self.logger.error("❌ 온톨로지에 TimeSlot 클래스가 없습니다. 시스템을 종료합니다.")
+            raise ValueError("TimeSlot 클래스가 온톨로지에 정의되지 않았습니다.")
+        
         # valid_product_line_combinations 생성 (ConstraintManager에서 필요)
         self.valid_product_line_combinations = []
         for product in self.products:
@@ -222,6 +234,7 @@ class ProductionOptimizer:
         
         self.logger.info(f"온톨로지 데이터 추출 완료: {len(self.lines)}개 라인, {len(self.products)}개 제품")
         self.logger.info(f"유효한 제품-라인 조합: {len(self.valid_product_line_combinations)}개")
+        self.logger.info(f"시간대: {len(self.ontology_timeslots)}개 (온톨로지 기반)")
     
     def _setup_active_lines(self, active_lines):
         """
@@ -240,78 +253,25 @@ class ProductionOptimizer:
                 self.logger.warning(f"존재하지 않는 라인 무시: {inactive_lines}")
             self.logger.info(f"활성화된 라인: {self.lines}")
     
-    def _generate_time_slots(self) -> List[str]:
+    def _get_max_working_hours(self, timeslot_name: str) -> float:
         """
-        시간 슬롯 생성 (월~금, 조간/야간)
-        Returns:
-            list: 시간 슬롯 리스트
-        """
-        days = ['월요일', '화요일', '수요일', '목요일', '금요일']
-        shifts = ['조간', '야간']
-        time_slots = []
-        
-        for day in days:
-            for shift in shifts:
-                time_slots.append(f"{day}_{shift}")
-        
-        return time_slots  # ['월요일_조간', '월요일_야간', '화요일_조간', ...]
-    
-    def _get_max_working_hours(self, time_slot: str) -> float:
-        """
-        시프트별 최대 가동시간 반환 (온톨로지 매니저 설정 사용)
+        온톨로지 TimeSlot 인스턴스에서 작업시간 반환
         Args:
-            time_slot: str, 시간 슬롯 (예: '수요일_조간')
+            timeslot_name: str, 시간대 이름 (예: '수요일_조간')
         Returns:
             float: 최대 가동시간
         """
-        day, shift = time_slot.split('_')
+        # 온톨로지에서 TimeSlot 인스턴스 찾기
+        if timeslot_name in self.timeslot_instances:
+            timeslot = self.timeslot_instances[timeslot_name]
+            if hasattr(timeslot, 'hasWorkingHours') and timeslot.hasWorkingHours:
+                working_hours = timeslot.hasWorkingHours[0]
+                self.logger.debug(f"✅ 온톨로지에서 {timeslot_name} 작업시간 조회: {working_hours}시간")
+                return working_hours
         
-        # 온톨로지 매니저의 시간 설정 사용
-        if hasattr(self.ontology_manager, '_default_working_hours'):
-            # 요일별 인덱스 매핑
-            day_to_index = {
-                '월요일': 0,
-                '화요일': 1, 
-                '수요일': 2,
-                '목요일': 3,
-                '금요일': 4
-            }
-            
-            if day in day_to_index:
-                day_index = day_to_index[day]
-                if day_index in self.ontology_manager._default_working_hours:
-                    return self.ontology_manager._default_working_hours[day_index]
-        
-        # 온톨로지 매니저 설정을 찾을 수 없는 경우 오류
-        self.logger.error(f"온톨로지 매니저 시간 설정을 찾을 수 없습니다: {time_slot}")
-        raise ValueError(f"온톨로지 매니저의 시간 설정이 없습니다. OntologyManager가 올바르게 초기화되었는지 확인해주세요.")
-    
-    def set_working_hours(self, working_hours_dict):
-        """
-        온톨로지 매니저를 통해 날짜별 최대 가동시간 설정
-        
-        Args:
-            working_hours_dict: {요일인덱스: 시간} 형태의 딕셔너리
-                예: {0: 10.5, 1: 10.5, 2: 8.0, 3: 10.5, 4: 10.5}
-        """
-        self.ontology_manager.set_working_hours(working_hours_dict)
-        self.logger.info(f"생산 최적화기 시간 설정 업데이트: {working_hours_dict}")
-    
-    def get_current_working_hours(self):
-        """
-        현재 설정된 작업 시간 정보 반환
-        
-        Returns:
-            dict: 현재 시간 설정 정보
-        """
-        if hasattr(self.ontology_manager, '_default_working_hours'):
-            return {
-                'working_hours': self.ontology_manager._default_working_hours.copy()
-            }
-        else:
-            return {
-                'working_hours': None
-            }
+        # 온톨로지에서 찾지 못한 경우 오류
+        self.logger.error(f"온톨로지에서 {timeslot_name} 작업시간을 찾을 수 없습니다.")
+        raise ValueError(f"온톨로지에서 시간 설정이 없습니다. OntologyManager가 올바르게 초기화되었는지 확인해주세요.")
     
     def _get_capacity_rate(self, product: str, line: str) -> float:
         """
@@ -366,7 +326,7 @@ class ProductionOptimizer:
 
     def _get_changeover_time(self, from_product: str, to_product: str, line: str) -> float:
         """
-        제품 간 교체 시간 조회 (change_over.json 기반)
+        제품 간 교체 시간 조회 (온톨로지 기반)
         Args:
             from_product: str, 이전 제품
             to_product: str, 다음 제품
@@ -380,79 +340,66 @@ class ProductionOptimizer:
                 self.logger.warning(f"교체 시간 조회 실패: 라인 정보가 없음 (제품: {from_product} → {to_product}), 기본값 0.4h 사용")
                 return 0.4
             
-            # change_over.json에서 교체 시간 조회
-            # json_data 구조: ['products', 'lines', 'changeover']
-            # changeover_rules는 'changeover' 키 안에 있음
-            if 'changeover' in self.json_data and 'changeover_rules' in self.json_data['changeover'] and line in self.json_data['changeover']['changeover_rules']:
-                line_rules = self.json_data['changeover']['changeover_rules'][line]
+            # 온톨로지에서 교체 규칙 조회
+            if line in self.changeover_rules:
+                line_rules = self.changeover_rules[line]
                 
                 # 제품별 교체 시간 규칙 찾기
-                for rule in line_rules.get('rules', []):
-                    from_rule = rule.get('from')
-                    to_rule = rule.get('to')
+                for rule in line_rules:
+                    from_rule = rule.hasFromCondition[0] if rule.hasFromCondition else None
+                    to_rule = rule.hasToCondition[0] if rule.hasToCondition else None
+                    changeover_time = rule.hasChangeoverTimeValue[0] if rule.hasChangeoverTimeValue else None
+                    rule_description = rule.hasRuleDescription[0] if rule.hasRuleDescription else "설명 없음"
+                    
+                    match_changeover = self._match_changeover_rule(from_product, to_product, from_rule, to_rule, line)
                     
                     # 제품 코드 매칭 (실제 제품 코드와 규칙의 from/to 비교)
-                    if self._match_changeover_rule(from_product, to_product, from_rule, to_rule):
-                        changeover_time = rule.get('time', 0.4)
-                        self.logger.debug(f"교체 시간 조회 성공: {from_product} → {to_product} @ {line} = {changeover_time}h")
+                    if match_changeover and changeover_time is not None:
+                        self.logger.debug(f"교체 시간 조회 성공: {from_product} → {to_product} @ {line} = {changeover_time}h ({rule_description})")
                         return changeover_time
                 
                 # 규칙을 찾지 못한 경우 기본값 반환
                 self.logger.warning(f"교체 시간 규칙 없음: {from_product} → {to_product} @ {line}, 기본값 0.4h 사용")
                 return 0.4
             else:
-                # changeover_rules가 없는 경우 기본값 반환
-                if 'changeover' not in self.json_data:
-                    self.logger.warning(f"changeover 데이터 없음: {line}, 기본값 0.4h 사용")
-                elif 'changeover_rules' not in self.json_data['changeover']:
-                    self.logger.warning(f"changeover_rules 키 없음: {line}, 기본값 0.4h 사용")
-                elif line not in self.json_data['changeover']['changeover_rules']:
-                    self.logger.warning(f"라인 {line}에 대한 changeover_rules 없음, 기본값 0.4h 사용")
-                else:
-                    self.logger.warning(f"changeover_rules 구조 오류: {line}, 기본값 0.4h 사용")
+                # 온톨로지에 해당 라인의 교체 규칙이 없는 경우 기본값 반환
+                self.logger.warning(f"라인 {line}에 대한 교체 규칙이 온톨로지에 없음, 기본값 0.4h 사용")
                 return 0.4
                 
         except Exception as e:
             self.logger.warning(f"교체 시간 조회 실패: {from_product} → {to_product} @ {line}, 오류: {e}, 기본값 0.4h 사용")
             return 0.4
     
-    def _match_changeover_rule(self, from_product: str, to_product: str, from_rule, to_rule) -> bool:
+    def _match_changeover_rule(self, from_product: str, to_product: str, from_rule, to_rule, line: str) -> bool:
         """
-        제품과 교체 규칙 매칭
+        제품과 교체 규칙 매칭 (rule_type을 키값으로 사용)
         Args:
             from_product: str, 실제 이전 제품 코드
             to_product: str, 실제 다음 제품 코드
             from_rule: 규칙의 from 값
             to_rule: 규칙의 to 값
+            line: str, 라인명 (규칙 타입 결정에 사용)
         Returns:
             bool: 매칭 여부
         """
         try:
-            # 제품 정보에서 용기 높이 또는 특성 가져오기
+            # 제품 정보에서 비교할 제품 가져오기
             from_product_info = self._get_product_info(from_product)
             to_product_info = self._get_product_info(to_product)
             
+            # 제품 정보가 없으면 매칭 실패
             if not from_product_info or not to_product_info:
                 return False
             
-            # 라인별 규칙 타입에 따른 매칭
-            if from_rule == "None" and to_rule == "None":
-                # 동일 제품 교체 (용기 높이 등이 동일)
-                return self._is_same_product_type(from_product_info, to_product_info)
+            # 라인별 규칙 타입 확인 (제품정보의 키값)
+            rule_type = self._get_rule_type_for_line(line)
             
-            elif isinstance(from_rule, (int, float)) and isinstance(to_rule, (int, float)):
-                # 용기 높이 기준 (예: 90mm, 105mm)
-                from_height = from_product_info.get('height', 0)
-                to_height = to_product_info.get('height', 0)
-                return from_height == from_rule and to_height == to_rule
+            # rule_type을 키값으로 사용하여 제품 정보에서 값 추출
+            from_value = from_product_info.get(rule_type, None)
+            to_value = to_product_info.get(rule_type, None)
             
-            elif isinstance(from_rule, str) and isinstance(to_rule, str):
-                # 제품 타입 기준 (예: "컵면", "면베이스")
-                from_type = from_product_info.get('product_type', '')
-                to_type = to_product_info.get('product_type', '')
-                return from_type == from_rule and to_type == to_rule
-            
-            return False
+            # 규칙과 제품 정보 매칭
+            return from_value == from_rule and to_value == to_rule
             
         except Exception as e:
             self.logger.debug(f"규칙 매칭 실패: {e}")
@@ -473,26 +420,25 @@ class ProductionOptimizer:
             pass
         return {}
     
-    def _is_same_product_type(self, from_info: dict, to_info: dict) -> bool:
+    def _get_rule_type_for_line(self, line: str) -> str:
         """
-        두 제품이 동일한 타입인지 확인
+        라인별 교체 규칙 타입 반환 (온톨로지 기반)
         Args:
-            from_info: dict, 이전 제품 정보
-            to_info: dict, 다음 제품 정보
+            line: str, 라인명
         Returns:
-            bool: 동일 타입 여부
+            str: 규칙 타입 (예: 'height', 'product_type', 'units_per_pack', 'market_type', 'universal')
         """
         try:
-            # 용기 높이, 제품 타입 등이 동일한지 확인
-            from_height = from_info.get('height', 0)
-            to_height = to_info.get('height', 0)
-            from_type = from_info.get('product_type', '')
-            to_type = to_info.get('product_type', '')
-            
-            return from_height == to_height and from_type == to_type
-            
-        except:
-            return False
+            # 온톨로지에서 해당 라인의 교체 규칙 조회
+            if line in self.changeover_rules and self.changeover_rules[line]:
+                # 첫 번째 규칙의 rule_type 반환 (라인별로 동일한 rule_type 사용)
+                first_rule = self.changeover_rules[line][0]
+                if hasattr(first_rule, 'hasRuleType') and first_rule.hasRuleType:
+                    return first_rule.hasRuleType[0]
+        except Exception as e:
+            self.logger.warning(f"라인 {line}의 규칙 타입 조회 실패: {e}")
+        
+        return 'unknown'
     
     def _get_setup_time(self, line: str) -> float:
         """
@@ -554,7 +500,7 @@ class ProductionOptimizer:
         """
         결정 변수 생성 (단순화된 구조: 기존 변수만 유지)
         """
-        self.logger.info("변수 생성 중... (단순화된 구조)")
+        self.logger.info("변수 생성 중... (온톨로지 기반)")
         
         # 실제 생산 가능한 제품-라인 조합 생성
         self.valid_product_line_combinations = []
@@ -584,7 +530,7 @@ class ProductionOptimizer:
         # x[i,j,k] = 1: 제품 i를 라인 j에서 시점 k에 생산
         self.variables['production'] = LpVariable.dicts(
             "production",
-            [(i, j, k) for i, j in self.valid_product_line_combinations for k in self.time_slots],
+            [(i, j, k) for i, j in self.valid_product_line_combinations for k in self.ontology_timeslots],
             cat=LpBinary
         )
         
@@ -592,7 +538,7 @@ class ProductionOptimizer:
         # p[i,j,k]: 제품 i를 라인 j에서 시점 k에 생산하는 시간
         self.variables['production_time'] = LpVariable.dicts(
             "production_time",
-            [(i, j, k) for i, j in self.valid_product_line_combinations for k in self.time_slots],
+            [(i, j, k) for i, j in self.valid_product_line_combinations for k in self.ontology_timeslots],
             lowBound=0
         )
         
@@ -603,7 +549,7 @@ class ProductionOptimizer:
             [(i, i_prime, j, k) for i, j in self.valid_product_line_combinations 
              for i_prime, j_prime in self.valid_product_line_combinations 
              if j == j_prime and i != i_prime  # 같은 라인에서 다른 제품으로 교체
-             for k in self.time_slots],
+             for k in self.ontology_timeslots],
             cat=LpBinary
         )
         
@@ -611,7 +557,7 @@ class ProductionOptimizer:
         # c[j,k]: 라인 j에서 시점 k에 교체 시간
         self.variables['changeover_time'] = LpVariable.dicts(
             "changeover_time",
-            [(j, k) for j in self.lines for k in self.time_slots],
+            [(j, k) for j in self.lines for k in self.ontology_timeslots],
             lowBound=0
         )
         
@@ -619,7 +565,7 @@ class ProductionOptimizer:
         # clean[j,k]: 라인 j에서 시점 k에 청소 시간
         self.variables['cleaning_time'] = LpVariable.dicts(
             "cleaning_time",
-            [(j, k) for j in self.lines for k in self.time_slots],
+            [(j, k) for j in self.lines for k in self.ontology_timeslots],
             lowBound=0
         )
         
@@ -628,7 +574,7 @@ class ProductionOptimizer:
         self.variables['continuity'] = LpVariable.dicts(
             "continuity",
             [(i, j, k) for i, j in self.valid_product_line_combinations 
-             for k in range(len(self.time_slots) - 1)],  # 마지막 시점 제외
+             for k in range(len(self.ontology_timeslots) - 1)],  # 마지막 시점 제외
             cat=LpBinary
         )
         
@@ -636,7 +582,7 @@ class ProductionOptimizer:
         # changeover_count[j,k] = 1: 라인 j에서 시점 k에 교체 발생
         self.variables['changeover_count'] = LpVariable.dicts(
             "changeover_count",
-            [(j, k) for j in self.lines for k in self.time_slots],
+            [(j, k) for j in self.lines for k in self.ontology_timeslots],
             cat=LpBinary
         )
         
@@ -646,7 +592,7 @@ class ProductionOptimizer:
         self.variables['sequence'] = LpVariable.dicts(
             "sequence",
             [(p, l, t, pos) for p, l in self.valid_product_line_combinations 
-             for t in self.time_slots for pos in range(1, self.MAX_POSITIONS + 1)],
+             for t in self.ontology_timeslots for pos in range(1, self.MAX_POSITIONS + 1)],
             cat=LpBinary
         )
         
@@ -656,7 +602,7 @@ class ProductionOptimizer:
             "sequence_changeover",
             [(p1, p2, l1, t, pos) for p1, l1 in self.valid_product_line_combinations 
              for p2, l2 in self.valid_product_line_combinations 
-             for t in self.time_slots for pos in range(1, self.MAX_POSITIONS)
+             for t in self.ontology_timeslots for pos in range(1, self.MAX_POSITIONS)
              if l1 == l2 and p1 != p2],
             cat=LpBinary
         )
@@ -667,15 +613,16 @@ class ProductionOptimizer:
             required_slots = self._calculate_required_time_slots(product, line)
             self.variables['block_start'][product, line] = LpVariable.dicts(
                 f"block_start_{product}_{line}",
-                range(len(self.time_slots) - required_slots + 1),
+                range(len(self.ontology_timeslots) - required_slots + 1),
                 cat=LpBinary
             )
         self.logger.info(f"블록 시작 변수 생성 완료: {len(self.variables['block_start'])}개")
         
-        self.logger.info(f"변수 생성 완료: {len(self.variables)}개 변수 그룹 (단순화된 구조)")
+        self.logger.info(f"변수 생성 완료: {len(self.variables)}개 변수 그룹 (온톨로지 기반)")
         self.logger.info("제거된 변수: continuous_production, product_order, adjacent_changeover, production_start, production_end")
         self.logger.info("변수 수 대폭 감소: O(P×L×T²) → O(P×L×T)")
         self.logger.info(f"새로 추가된 변수: sequence (시간대 내 제품 순서)")
+        self.logger.info(f"✅ 온톨로지 기반 시간대 사용: {len(self.ontology_timeslots)}개")
         
         # sequence 변수 생성 확인
         if 'sequence' in self.variables:
@@ -696,22 +643,22 @@ class ProductionOptimizer:
         # 1. 총 생산시간 최대화
         total_production_time = lpSum(self.variables['production_time'][i, j, k] 
                                      for i, j in self.valid_product_line_combinations 
-                                     for k in self.time_slots)
+                                     for k in self.ontology_timeslots)
         objective -= self.weights['production_time'] * total_production_time  # 가중치 1.0
         
         # 2. 총 교체시간 최소화
         total_changeover_time = lpSum(self.variables['changeover_time'][j, k] 
-                                     for j in self.lines for k in self.time_slots)
+                                     for j in self.lines for k in self.ontology_timeslots)
         objective += self.weights['changeover_time'] * total_changeover_time  # 가중치 5.0
         
         # 3. 총 교체횟수 최소화
         total_changeover_count = lpSum(self.variables['changeover_count'][j, k] 
-                                      for j in self.lines for k in self.time_slots)
+                                      for j in self.lines for k in self.ontology_timeslots)
         objective += self.weights['changeover_count'] * total_changeover_count  # 가중치 5.0
         
         # 4. 총 청소시간 최소화
         total_cleaning_time = lpSum(self.variables['cleaning_time'][j, k] 
-                                   for j in self.lines for k in self.time_slots)
+                                   for j in self.lines for k in self.ontology_timeslots)
         objective += self.weights['cleaning_time'] * total_cleaning_time  # 가중치 0.6
         
         # 5. 생산시간 활용률 부족 페널티 추가
@@ -860,7 +807,7 @@ class ProductionOptimizer:
             
         production_per_hour = capacity_rate * track_count * 60 / products_per_box  # 시간당 박스
         required_hours = target_boxes / production_per_hour
-        max_hours = self._get_max_working_hours(self.time_slots[0])
+        max_hours = self._get_max_working_hours(self.ontology_timeslots[0])
         required_slots = ceil(required_hours / max_hours)
         
         self.logger.debug(f"제품 {product}, 라인 {line}: 필요 시간대 {required_slots}")
@@ -890,7 +837,7 @@ class ProductionOptimizer:
         for line in self.lines:
             solution['production_schedule'][line] = {}
             
-            for time_slot in self.time_slots:
+            for time_slot in self.ontology_timeslots:
                 line_schedule = []
                 
                 # 유효한 제품-라인 조합만 확인
@@ -927,7 +874,7 @@ class ProductionOptimizer:
         
         # 교체 이벤트 추출 (수정된 로직)
         for line in self.lines:
-            for k, time_slot in enumerate(self.time_slots):
+            for k, time_slot in enumerate(self.ontology_timeslots):
                 # === 디버깅: 교체시간 변수 값 확인 ===
                 if line == "16" and time_slot == "월요일_야간":
                     changeover_time_var = self.variables['changeover_time'][line, time_slot]
@@ -985,7 +932,7 @@ class ProductionOptimizer:
                 
                 # 2. 모든 연속된 시간대에서 교체 이벤트 감지
                 if k > 0:  # 첫 번째 시간대가 아닌 경우
-                    previous_time_slot = self.time_slots[k-1]
+                    previous_time_slot = self.ontology_timeslots[k-1]
                     previous_productions = solution['production_schedule'][line].get(previous_time_slot, [])
                     current_productions = solution['production_schedule'][line].get(time_slot, [])
                     
@@ -1059,7 +1006,7 @@ class ProductionOptimizer:
         
         # 청소 이벤트 추출
         for line in self.lines:
-            for time_slot in self.time_slots:
+            for time_slot in self.ontology_timeslots:
                 cleaning_time = value(self.variables['cleaning_time'][line, time_slot])
                 if cleaning_time > 0:
                     solution['cleaning_events'].append({
@@ -1070,11 +1017,11 @@ class ProductionOptimizer:
         
         # 통계 정보 (유효한 조합만)
         total_production_time = sum(value(self.variables['production_time'][i, j, k]) 
-                                  for i, j in self.valid_product_line_combinations for k in self.time_slots)
+                                  for i, j in self.valid_product_line_combinations for k in self.ontology_timeslots)
         total_changeover_time = sum(value(self.variables['changeover_time'][j, k]) 
-                                  for j in self.lines for k in self.time_slots)
+                                  for j in self.lines for k in self.ontology_timeslots)
         total_cleaning_time = sum(value(self.variables['cleaning_time'][j, k]) 
-                                for j in self.lines for k in self.time_slots)
+                                for j in self.lines for k in self.ontology_timeslots)
         
         solution['statistics'] = {
             'total_production_time': total_production_time,
