@@ -167,6 +167,9 @@ def create_changeover_rule_instances(onto, json_data, lines):
     counter = 0
     for line_id, rule_info in json_data['changeover']['changeover_rules'].items():
         if line_id in lines:
+            # 라인별 rule_type 정보 추출
+            rule_type = rule_info.get('rule_type', 'unknown')
+            
             for rule in rule_info['rules']:
                 rule_inst = onto.ChangeoverRule(f"rule_{line_id}_{counter}")
                 rule_inst.appliesTo = [lines[line_id]]
@@ -174,8 +177,16 @@ def create_changeover_rule_instances(onto, json_data, lines):
                 rule_inst.hasToCondition = [str(rule.get('to', 'any'))]
                 rule_inst.hasChangeoverTimeValue = [rule['time']]
                 rule_inst.hasRuleDescription = [rule['description']]
+                
+                # rule_type 정보 추가
+                rule_inst.hasRuleType = [rule_type]
+                
                 changeover_rules.append(rule_inst)
                 counter += 1
+                
+                # 디버깅을 위한 로그 출력 (선택사항)
+                print(f"✅ 교체 규칙 생성: 라인 {line_id}, 타입 {rule_type}, {rule['from']}→{rule['to']}, 시간 {rule['time']}h")
+    
     return changeover_rules  # [<onto.ChangeoverRule ...>, ...]
 
 
@@ -262,4 +273,146 @@ def create_day_instances(onto, shifts, date_list=None, default_working_hours=Non
         days[config['date']] = day
         days[config['day_name']] = day
     
-    return days  # {'2025-07-21': <onto.Day ...>, ...} 
+    return days  # {'2025-07-21': <onto.Day ...>, ...}
+
+
+def create_timeslot_instances(onto, days, shifts, default_working_hours=None):
+    """
+    TimeSlot 인스턴스 생성 (새로 추가된 함수)
+    Args:
+        onto: owlready2 온톨로지 객체
+        days: dict, Day 인스턴스들
+        shifts: dict, Shift 인스턴스들
+        default_working_hours: dict, 날짜별 최대 가동시간 (예: {0: 10.5, 1: 10.5, 2: 8.0, ...})
+    Returns:
+        timeslots: dict, {'월요일_조간': <onto.TimeSlot ...>, '월요일_야간': <onto.TimeSlot ...>, ...}
+    """
+    timeslots = {}
+    day_names = ["월요일", "화요일", "수요일", "목요일", "금요일"]
+    shift_names = ["조간", "야간"]
+    
+    for i, day_name in enumerate(day_names):
+        # 날짜별 작업시간 설정
+        if default_working_hours and i in default_working_hours:
+            working_hours = default_working_hours[i]
+        else:
+            # 기본값 설정
+            if i == 2:  # 수요일 (특별한 날)
+                working_hours = 8.0
+            else:
+                working_hours = 10.5
+        
+        for shift_name in shift_names:
+            # 시간대 이름 생성 (예: '월요일_조간')
+            timeslot_name = f"{day_name}_{shift_name}"
+            
+            # TimeSlot 인스턴스 생성
+            timeslot = onto.TimeSlot(f"timeslot_{timeslot_name}")
+            
+            # 속성 할당
+            timeslot.hasTimeSlotName = [timeslot_name]
+            timeslot.hasDay = [days[day_name]]
+            timeslot.hasShift = [shifts[shift_name]]
+            timeslot.hasWorkingHours = [working_hours]
+            
+            # 시작/종료 시간 설정
+            if shift_name == "조간":
+                timeslot.hasStartTime = [0.0]  # 0시부터 시작
+                timeslot.hasEndTime = [working_hours]  # 작업시간만큼
+            else:  # 야간
+                timeslot.hasStartTime = [working_hours]  # 조간 종료 후 시작
+                timeslot.hasEndTime = [working_hours * 2]  # 조간 + 야간
+            
+            timeslots[timeslot_name] = timeslot
+    
+    # 시간대 간 순서 관계 설정 (nextTimeSlot, previousTimeSlot)
+    _setup_timeslot_sequence(timeslots, day_names, shift_names)
+    
+    print(f"✅ TimeSlot 인스턴스 생성 완료: {len(timeslots)}개")
+    for name, ts in timeslots.items():
+        print(f"  - {name}: {ts.hasWorkingHours[0]}시간 ({ts.hasStartTime[0]}~{ts.hasEndTime[0]}시)")
+    
+    return timeslots  # {'월요일_조간': <onto.TimeSlot ...>, ...}
+
+
+def _setup_timeslot_sequence(timeslots, day_names, shift_names):
+    """
+    시간대 간 순서 관계 설정 (내부 함수)
+    Args:
+        timeslots: dict, TimeSlot 인스턴스들
+        day_names: list, 요일 이름 리스트
+        shift_names: list, 시프트 이름 리스트
+    """
+    for i, day_name in enumerate(day_names):
+        for j, shift_name in enumerate(shift_names):
+            current_name = f"{day_name}_{shift_name}"
+            current_timeslot = timeslots[current_name]
+            
+            # 다음 시간대 설정
+            if j < len(shift_names) - 1:  # 같은 날의 다음 시프트
+                next_shift_name = shift_names[j + 1]
+                next_name = f"{day_name}_{next_shift_name}"
+                if next_name in timeslots:
+                    current_timeslot.nextTimeSlot = [timeslots[next_name]]
+                    timeslots[next_name].previousTimeSlot = [current_timeslot]
+            elif i < len(day_names) - 1:  # 다음 날의 첫 번째 시프트
+                next_day_name = day_names[i + 1]
+                next_name = f"{next_day_name}_{shift_names[0]}"
+                if next_name in timeslots:
+                    current_timeslot.nextTimeSlot = [timeslots[next_name]]
+                    timeslots[next_name].previousTimeSlot = [current_timeslot]
+
+
+def create_production_segment_instances(onto, lines, days, shifts, timeslots, products, order_data):
+    """
+    ProductionSegment 인스턴스 생성 (수정된 함수)
+    Args:
+        onto: owlready2 온톨로지 객체
+        lines: dict, Line 인스턴스들
+        days: dict, Day 인스턴스들
+        shifts: dict, Shift 인스턴스들
+        timeslots: dict, TimeSlot 인스턴스들
+        products: dict, Product 인스턴스들
+        order_data: dict, 제품별 생산지시량
+    Returns:
+        segments: list, [<onto.ProductionSegment ...>, ...]
+    """
+    segments = []
+    counter = 0
+    
+    # 각 제품별로 필요한 생산 세그먼트 생성
+    for product_code, target_boxes in order_data.items():
+        if product_code in products:
+            product = products[product_code]
+            
+            # 해당 제품을 생산할 수 있는 라인들 찾기
+            for line_id, line in lines.items():
+                # 제품-라인 관계 확인 (간단한 검증)
+                if hasattr(line, 'hasTeam'):  # 라인이 팀에 할당되어 있으면 유효한 라인
+                    # 기본 세그먼트 생성 (실제 최적화에서 세부 조정)
+                    segment = onto.ProductionSegment(f"segment_{counter}")
+                    
+                    # 필수 속성 할당
+                    segment.occursInLine = [line]
+                    segment.occursOnDay = [list(days.values())[0]]  # 첫 번째 Day 인스턴스 사용
+                    segment.occursInShift = [shifts["조간"]]  # 기본값, 최적화에서 조정
+                    segment.occursInTimeSlot = [timeslots["월요일_조간"]]  # 기본값, 최적화에서 조정
+                    segment.producesProduct = [product]
+                    
+                    # 시간 관련 속성 (기본값)
+                    segment.hasProductionHours = [2.0]  # 기본 생산시간
+                    segment.hasChangeoverHours = [0.5]  # 기본 교체시간
+                    segment.hasCleaningHours = [0.2]   # 기본 청소시간
+                    segment.hasTotalSegmentHours = [2.7]  # 총 소요시간
+                    
+                    # 생산량 (박스 단위)
+                    segment.hasProductionQuantity = [target_boxes]
+                    
+                    # 날짜 (기본값)
+                    segment.hasSegmentDate = [datetime.date(2025, 7, 21)]
+                    
+                    segments.append(segment)
+                    counter += 1
+    
+    print(f"✅ ProductionSegment 인스턴스 생성 완료: {len(segments)}개")
+    return segments  # [<onto.ProductionSegment ...>, ...] 

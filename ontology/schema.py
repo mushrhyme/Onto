@@ -20,12 +20,8 @@ def create_schema(onto):
         class ChangeoverRule(Thing): pass  # 교체 규칙 클래스
         class Shift(Thing): pass  # 근무조(시프트) 클래스
         class Day(Thing): pass  # 날짜 클래스
-        class ProductionSchedule(Thing): pass  # 생산 일정 클래스
+        class TimeSlot(Thing): pass  # 시간대 클래스 (예: '월요일_조간', '월요일_야간')
         class ProductionSegment(Thing): pass  # 생산 세그먼트(작업 단위) 클래스
-        class ChangeoverEvent(Thing): pass  # 교체 이벤트 클래스
-        class ContinuousProductionRun(Thing): pass  # 연속 생산 구간 클래스
-        class ProductionRunStart(Thing): pass  # 생산 구간 시작점 클래스
-        class ProductionRunEnd(Thing): pass  # 생산 구간 종료점 클래스
 
         # === 객체 속성(ObjectProperty) 정의 ===
         class hasTeam(ObjectProperty): 
@@ -48,13 +44,22 @@ def create_schema(onto):
             domain = [Day]; 
             range = [Shift]  # 날짜는 시프트를 가짐
         
-        class containsSegment(ObjectProperty): 
-            domain = [ProductionSchedule]; 
-            range = [ProductionSegment]  # 생산 일정은 여러 세그먼트를 포함
+        # === TimeSlot 관련 객체 속성들 ===
+        class hasDay(ObjectProperty): 
+            domain = [TimeSlot]; 
+            range = [Day]  # 시간대는 특정 날짜에 속함
         
-        class scheduledForDay(ObjectProperty): 
-            domain = [ProductionSchedule]; 
-            range = [Day]  # 생산 일정은 특정 날짜에 할당됨
+        class hasShift(ObjectProperty): 
+            domain = [TimeSlot]; 
+            range = [Shift]  # 시간대는 특정 시프트에 속함
+        
+        class nextTimeSlot(ObjectProperty): 
+            domain = [TimeSlot]; 
+            range = [TimeSlot]  # 다음 시간대와의 순서 관계
+        
+        class previousTimeSlot(ObjectProperty): 
+            domain = [TimeSlot]; 
+            range = [TimeSlot]  # 이전 시간대와의 순서 관계
         
         class occursInLine(ObjectProperty): 
             domain = [ProductionSegment]; 
@@ -68,6 +73,10 @@ def create_schema(onto):
             domain = [ProductionSegment]; 
             range = [Shift]  # 세그먼트는 특정 시프트에 발생
         
+        class occursInTimeSlot(ObjectProperty): 
+            domain = [ProductionSegment]; 
+            range = [TimeSlot]  # 세그먼트는 특정 시간대에 발생
+        
         class producesProduct(ObjectProperty): 
             domain = [ProductionSegment]; 
             range = [Product]  # 세그먼트는 특정 제품을 생산
@@ -75,30 +84,6 @@ def create_schema(onto):
         class nextSegment(ObjectProperty): 
             domain = [ProductionSegment]; 
             range = [ProductionSegment]  # 다음 세그먼트와 연결
-        
-        class triggersEvent(ObjectProperty): 
-            domain = [ChangeoverEvent]; 
-            range = [ProductionSegment]  # 교체 이벤트가 트리거하는 세그먼트
-        
-        class startsRun(ObjectProperty): 
-            domain = [ProductionSegment]; 
-            range = [ProductionRunStart]  # 세그먼트가 생산 구간 시작점과 연결
-        
-        class endsRun(ObjectProperty): 
-            domain = [ProductionSegment]; 
-            range = [ProductionRunEnd]  # 세그먼트가 생산 구간 종료점과 연결
-        
-        class hasRunStart(ObjectProperty): 
-            domain = [ContinuousProductionRun]; 
-            range = [ProductionRunStart]  # 연속 생산 구간의 시작점
-        
-        class hasRunEnd(ObjectProperty): 
-            domain = [ContinuousProductionRun]; 
-            range = [ProductionRunEnd]  # 연속 생산 구간의 종료점
-        
-        class runContainsSegment(ObjectProperty): 
-            domain = [ContinuousProductionRun]; 
-            range = [ProductionSegment]  # 연속 생산 구간이 포함하는 세그먼트
 
         # === 데이터 속성(DataProperty) 정의 ===
         # Product(제품) 관련
@@ -197,6 +182,10 @@ def create_schema(onto):
             domain = [ChangeoverRule]; 
             range = [str]  # 규칙 설명 (예: 'A→B 교체')
 
+        class hasRuleType(DataProperty): 
+            domain = [ChangeoverRule]; 
+            range = [str]  # 규칙 타입 (예: 'units_per_pack', 'product_type', 'height', 'market_type', 'universal')
+
         # Shift(시프트) 관련
         class hasShiftType(DataProperty): 
             domain = [Shift]; 
@@ -211,18 +200,22 @@ def create_schema(onto):
             domain = [Day]; 
             range = [float]  # 최대 근무 시간 (예: 10.0)
 
-        # ProductionSchedule(생산 일정) 관련
-        class hasScheduleDate(DataProperty): 
-            domain = [ProductionSchedule]; 
-            range = [str]  # 일정 날짜 (예: '2025-07-21')
+        # === TimeSlot 관련 데이터 속성들 ===
+        class hasTimeSlotName(DataProperty): 
+            domain = [TimeSlot]; 
+            range = [str]  # 시간대 이름 (예: '월요일_조간')
         
-        class hasTotalProductionTime(DataProperty): 
-            domain = [ProductionSchedule]; 
-            range = [float]  # 총 생산 시간 (예: 7.5)
+        class hasWorkingHours(DataProperty): 
+            domain = [TimeSlot]; 
+            range = [float]  # 시간대별 작업 시간 (예: 10.5)
         
-        class hasTotalChangeoverTime(DataProperty): 
-            domain = [ProductionSchedule]; 
-            range = [float]  # 총 교체 시간 (예: 1.0)
+        class hasStartTime(DataProperty): 
+            domain = [TimeSlot]; 
+            range = [float]  # 시작 시간 (예: 0.0)
+        
+        class hasEndTime(DataProperty): 
+            domain = [TimeSlot]; 
+            range = [float]  # 종료 시간 (예: 10.5)
 
         # ProductionSegment(생산 세그먼트) 관련
         class hasProductionHours(DataProperty): 
@@ -249,33 +242,22 @@ def create_schema(onto):
             domain = [ProductionSegment]; 
             range = [datetime.date]  # 세그먼트 날짜 (예: datetime.date(2025,7,21))
 
-        # ContinuousProductionRun(연속 생산 구간) 관련
-        class hasRunDuration(DataProperty): 
-            domain = [ContinuousProductionRun]; 
-            range = [float]  # 연속 생산 구간 소요 시간 (예: 5.0)
-        
-        class hasRunProduct(DataProperty): 
-            domain = [ContinuousProductionRun]; 
-            range = [str]  # 연속 생산 제품 코드 (예: 'P001')
-
-        # ProductionRunStart/End(생산 구간 시작/종료) 관련
-        class hasRunStartTime(DataProperty): 
-            domain = [ProductionRunStart]; 
-            range = [str]  # 시작 시각 (예: '08:00')
-        
-        class hasRunEndTime(DataProperty): 
-            domain = [ProductionRunEnd]; 
-            range = [str]  # 종료 시각 (예: '12:00')
-
         # === 제약조건(Constraint) 정의 ===
         # Product는 반드시 제품 코드를 가져야 함 (예: Product.hasProductCode = 'P001')
         Product.is_a.append(hasProductCode.exactly(1))
         
-        # ProductionSegment는 반드시 라인, 날짜, 시프트, 제품을 가져야 함
+        # TimeSlot은 반드시 날짜와 시프트를 가져야 함
+        TimeSlot.is_a.append(hasDay.exactly(1))
+        TimeSlot.is_a.append(hasShift.exactly(1)) # 수정된 속성 이름
+        TimeSlot.is_a.append(hasTimeSlotName.exactly(1))
+        TimeSlot.is_a.append(hasWorkingHours.exactly(1))
+        
+        # ProductionSegment는 반드시 라인, 날짜, 시프트, 제품, 시간대를 가져야 함
         ProductionSegment.is_a.append(occursInLine.exactly(1))
         ProductionSegment.is_a.append(occursOnDay.exactly(1))
         ProductionSegment.is_a.append(occursInShift.exactly(1))
         ProductionSegment.is_a.append(producesProduct.exactly(1))
+        ProductionSegment.is_a.append(occursInTimeSlot.exactly(1))
         
         # 시간 관련 속성들은 선택적 (0 또는 1개)
         ProductionSegment.is_a.append(hasCleaningHours.max(1))

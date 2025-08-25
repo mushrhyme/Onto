@@ -9,18 +9,18 @@ class ConstraintManager:
         self.logger = optimizer.logger
         self.products = optimizer.products
         self.lines = optimizer.lines
-        self.time_slots = optimizer.time_slots
+        self.time_slots = optimizer.ontology_timeslots
         self.line_constraints = optimizer.line_constraints
         self.valid_product_line_combinations = optimizer.valid_product_line_combinations
         self.order_data = optimizer.order_data
         self.json_data = optimizer.json_data
+        self._get_product_name = optimizer._get_product_name
         self._get_capacity_rate = optimizer._get_capacity_rate
         self._get_track_count = optimizer._get_track_count
         self._get_package_count = optimizer._get_package_count
         self._get_changeover_time = optimizer._get_changeover_time
         self._get_setup_time = optimizer._get_setup_time
         self._get_max_working_hours = optimizer._get_max_working_hours
-        self._get_product_name = optimizer._get_product_name
         self.MAX_POSITIONS = optimizer.MAX_POSITIONS  # 시간대 내 최대 생산 제품 수
 
     def add_all_constraints(self):
