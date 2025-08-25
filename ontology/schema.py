@@ -4,7 +4,7 @@ import datetime
 def create_schema(onto):
     """
     온톨로지 클래스, 객체/데이터 속성을 정의합니다.
-    v0 방식의 표준적인 owlready2 스타일을 사용합니다.
+    products.json과 change_over.json의 실제 키값에 맞춰 수정되었습니다.
     
     Args:
         onto: owlready2 온톨로지 객체
@@ -86,38 +86,46 @@ def create_schema(onto):
             range = [ProductionSegment]  # 다음 세그먼트와 연결
 
         # === 데이터 속성(DataProperty) 정의 ===
-        # Product(제품) 관련
+        # Product(제품) 관련 - products.json 키값에 맞춤
         class hasProductCode(DataProperty): 
             domain = [Product]; 
-            range = [str]  # 제품 코드 (예: 'P001')
+            range = [str]  # 제품 코드 (예: '101000463')
         
         class hasProductName(DataProperty): 
             domain = [Product]; 
-            range = [str]  # 제품명 (예: '초코파이')
+            range = [str]  # 제품명 (예: '수출신라면(일본)/NSJAPAN(사각)')
         
         class hasCategory(DataProperty): 
             domain = [Product]; 
-            range = [str]  # 제품 카테고리 (예: '스낵')
+            range = [str]  # 제품 카테고리 (예: '봉지면', '용기면', '컵면')
         
         class hasProductType(DataProperty): 
             domain = [Product]; 
-            range = [str]  # 제품 타입 (예: '식품')
+            range = [str]  # 제품 타입 (예: '굵은면', '큰사발면')
         
-        class hasChangeoverGroup(DataProperty): 
+        class hasMarketType(DataProperty): 
             domain = [Product]; 
-            range = [str]  # 교체 그룹 (예: 'A')
+            range = [str]  # 시장 타입 (예: 'domestic', 'export')
         
         class hasWeight(DataProperty): 
             domain = [Product]; 
-            range = [int]  # 중량 (예: 100)
+            range = [int]  # 중량 (예: 120, 115, 111, 123)
         
-        class hasPackageCount(DataProperty): 
+        class hasHeight(DataProperty): 
             domain = [Product]; 
-            range = [int]  # 포장 단위 수량 (예: 10)
+            range = [int]  # 용기 높이 (예: 75, 90, 105)
+        
+        class hasItemsPerProduct(DataProperty): 
+            domain = [Product]; 
+            range = [int]  # 제품당 아이템 수 (예: 30, 5, 4, 3)
         
         class hasProductsPerBox(DataProperty): 
             domain = [Product]; 
-            range = [int]  # 박스당 제품 수 (예: 20)
+            range = [int]  # 박스당 제품 수 (예: 1, 8, 12)
+        
+        class hasItemsPerBox(DataProperty): 
+            domain = [Product]; 
+            range = [int]  # 계산된 값: items_per_product × products_per_box (예: 32, 40, 36)
 
         # Line(생산 라인) 관련
         class hasLineCategory(DataProperty): 
@@ -160,31 +168,31 @@ def create_schema(onto):
             domain = [Line]; 
             range = [int]  # 일일 최대 용량 (예: 1500)
 
-        # LineProductRelation(라인-제품 관계) 관련
+        # LineProductRelation(라인-제품 관계) 관련 - products.json의 lines.{line_id}.ct_rate에 맞춤
         class hasCTRate(DataProperty): 
             domain = [LineProductRelation]; 
-            range = [float]  # CT(사이클타임) 비율 (예: 0.95)
+            range = [float]  # CT(사이클타임) 비율 (예: 30.0, 40.0, 46.0)
 
-        # ChangeoverRule(교체 규칙) 관련
+        # ChangeoverRule(교체 규칙) 관련 - change_over.json 키값에 맞춤
         class hasFromCondition(DataProperty): 
             domain = [ChangeoverRule]; 
-            range = [str]  # 이전 조건 (예: 'A')
+            range = [int]  # 이전 조건 (예: 75, 90, 105) - height, items_per_box 규칙용
         
         class hasToCondition(DataProperty): 
             domain = [ChangeoverRule]; 
-            range = [str]  # 이후 조건 (예: 'B')
+            range = [int]  # 이후 조건 (예: 75, 90, 105) - height, items_per_box 규칙용
         
         class hasChangeoverTimeValue(DataProperty): 
             domain = [ChangeoverRule]; 
-            range = [float]  # 교체 시간 값 (예: 0.5)
+            range = [float]  # 교체 시간 값 (예: 0.3, 0.5, 0.6, 0.7, 1.0, 1.5, 2.0, 4.0)
         
         class hasRuleDescription(DataProperty): 
             domain = [ChangeoverRule]; 
-            range = [str]  # 규칙 설명 (예: 'A→B 교체')
-
+            range = [str]  # 규칙 설명 (예: '동일 교체', '90mm → 105mm')
+        
         class hasRuleType(DataProperty): 
             domain = [ChangeoverRule]; 
-            range = [str]  # 규칙 타입 (예: 'units_per_pack', 'product_type', 'height', 'market_type', 'universal')
+            range = [str]  # 규칙 타입 (예: 'height', 'items_per_box', 'product_type', 'market_type', 'universal')
 
         # Shift(시프트) 관련
         class hasShiftType(DataProperty): 
@@ -243,12 +251,12 @@ def create_schema(onto):
             range = [datetime.date]  # 세그먼트 날짜 (예: datetime.date(2025,7,21))
 
         # === 제약조건(Constraint) 정의 ===
-        # Product는 반드시 제품 코드를 가져야 함 (예: Product.hasProductCode = 'P001')
+        # Product는 반드시 제품 코드를 가져야 함 (예: Product.hasProductCode = '101000463')
         Product.is_a.append(hasProductCode.exactly(1))
         
         # TimeSlot은 반드시 날짜와 시프트를 가져야 함
         TimeSlot.is_a.append(hasDay.exactly(1))
-        TimeSlot.is_a.append(hasShift.exactly(1)) # 수정된 속성 이름
+        TimeSlot.is_a.append(hasShift.exactly(1))
         TimeSlot.is_a.append(hasTimeSlotName.exactly(1))
         TimeSlot.is_a.append(hasWorkingHours.exactly(1))
         

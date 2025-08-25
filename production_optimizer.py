@@ -44,24 +44,6 @@ class ProductionOptimizer:
         self.order_data = ontology_manager._order_data  # 주문 데이터
         self.logger = logger or logging.getLogger(__name__)
         
-        # 디버깅: json_data 구조 확인
-        self.logger.info(f"🔍 json_data 키: {list(self.json_data.keys()) if self.json_data else 'None'}")
-        if self.json_data:
-            if 'changeover' in self.json_data:
-                if 'changeover_rules' in self.json_data['changeover']:
-                    self.logger.info(f"🔍 changeover_rules 라인: {list(self.json_data['changeover']['changeover_rules'].keys())}")
-                    # 각 라인별 규칙 개수도 표시
-                    for line_id, rules in self.json_data['changeover']['changeover_rules'].items():
-                        rule_count = len(rules.get('rules', []))
-                        self.logger.info(f"  - 라인 {line_id}: {rule_count}개 규칙")
-                else:
-                    self.logger.warning("🔍 changeover_rules 키를 찾을 수 없습니다!")
-                    self.logger.info(f"🔍 changeover 키의 내용: {list(self.json_data['changeover'].keys())}")
-            else:
-                self.logger.warning("🔍 changeover 키를 찾을 수 없습니다!")
-        else:
-            self.logger.warning("🔍 json_data가 None입니다!")
-        
         # 모델 및 변수 초기화
         self.model = None
         self.variables = {}
@@ -161,23 +143,62 @@ class ProductionOptimizer:
                 self.lines.append(line_id)
                 self.line_instances[line_id] = line_instance
         
-        # 온톨로지에서 라인을 찾지 못한 경우 JSON 데이터 사용
+        # 온톨로지에서 라인을 찾지 못한 경우 오류 발생
         if not self.lines:
-            self.logger.warning("온톨로지에서 라인을 찾을 수 없어 JSON 데이터 사용")
-            self.lines = list(self.json_data['lines']['lines'].keys())
+            raise ValueError("온톨로지에서 라인을 찾을 수 없습니다. Line 클래스와 인스턴스를 확인해주세요.")
         
         # 제품 인스턴스 추출 (제품코드 기준)
         self.product_instances = {}
         if hasattr(self.onto, 'Product'):
+            self.logger.info(f"🔍 Product 인스턴스 {len(list(self.onto.Product.instances()))}개 발견")
             for product_instance in self.onto.Product.instances():
+                self.logger.info(f"🔍 제품 {product_instance.name} 처리 중...")
+                
                 # 제품코드 우선, 없으면 제품명 사용
-                product_code = product_instance.hasProductCode[0] if product_instance.hasProductCode else None
-                product_name = product_instance.hasProductName[0] if product_instance.hasProductName else product_instance.name
+                if hasattr(product_instance, 'hasProductCode') and product_instance.hasProductCode:
+                    product_code = product_instance.hasProductCode[0]
+                    self.logger.info(f"  → hasProductCode: {product_code}")
+                else:
+                    self.logger.info(f"  → hasProductCode 속성이 없거나 비어있음")
+                    product_code = None
+                
+                if hasattr(product_instance, 'hasProductName') and product_instance.hasProductName:
+                    product_name = product_instance.hasProductName[0]
+                    self.logger.info(f"  → hasProductName: {product_name}")
+                else:
+                    self.logger.info(f"  → hasProductName 속성이 없거나 비어있음")
+                    product_name = product_instance.name
+                
+                # 모든 제품 속성 확인
+                self.logger.info(f"  → 모든 속성 목록:")
+                for attr_name in dir(product_instance):
+                    if not attr_name.startswith('_') and not callable(getattr(product_instance, attr_name)):
+                        try:
+                            attr_value = getattr(product_instance, attr_name)
+                            if hasattr(attr_value, '__iter__') and not isinstance(attr_value, str):
+                                # 리스트나 다른 반복 가능한 객체인 경우
+                                if len(attr_value) > 0:
+                                    self.logger.info(f"    → {attr_name}: {attr_value[0] if hasattr(attr_value, '__getitem__') else attr_value}")
+                                else:
+                                    self.logger.info(f"    → {attr_name}: (비어있음)")
+                            else:
+                                self.logger.info(f"    → {attr_name}: {attr_value}")
+                        except Exception as e:
+                            self.logger.info(f"    → {attr_name}: 읽기 실패 ({e})")
                 
                 if product_code:
                     self.product_instances[product_code] = product_instance
+                    self.logger.info(f"  → 제품코드 {product_code}로 매핑됨")
                 else:
                     self.product_instances[product_name] = product_instance
+                    self.logger.info(f"  → 제품명 {product_name}으로 매핑됨")
+            
+            # 최종 결과 로깅
+            self.logger.info(f"✅ 제품 인스턴스 매핑 완료: {len(self.product_instances)}개")
+            for key, instance in self.product_instances.items():
+                self.logger.info(f"  → {key} → {instance.name}")
+        else:
+            self.logger.warning("❌ 온톨로지에 Product 클래스가 없습니다!")
         
         # 라인-제품 관계 추출 (제품코드 기준)
         self.line_product_relations = {}
@@ -202,13 +223,56 @@ class ProductionOptimizer:
         # 교체 규칙 추출
         self.changeover_rules = {}
         if hasattr(self.onto, 'ChangeoverRule'):
+            self.logger.info(f"🔍 ChangeoverRule 인스턴스 {len(list(self.onto.ChangeoverRule.instances()))}개 발견")
             for rule in self.onto.ChangeoverRule.instances():
-                line = rule.appliesTo[0] if rule.appliesTo else None
+                self.logger.debug(f"🔍 규칙 {rule.name} 처리 중...")
+                
+                # 규칙의 속성들 확인
+                if hasattr(rule, 'appliesTo') and rule.appliesTo:
+                    line = rule.appliesTo[0]
+                    self.logger.debug(f"  → appliesTo: {line.name if line else 'None'}")
+                else:
+                    self.logger.warning(f"  → appliesTo 속성이 없거나 비어있음")
+                    line = None
+                
+                if hasattr(rule, 'hasFromCondition') and rule.hasFromCondition:
+                    from_cond = rule.hasFromCondition[0]
+                    self.logger.debug(f"  → hasFromCondition: {from_cond}")
+                else:
+                    self.logger.warning(f"  → hasFromCondition 속성이 없거나 비어있음")
+                
+                if hasattr(rule, 'hasToCondition') and rule.hasToCondition:
+                    to_cond = rule.hasToCondition[0]
+                    self.logger.debug(f"  → hasToCondition: {to_cond}")
+                else:
+                    self.logger.warning(f"  → hasToCondition 속성이 없거나 비어있음")
+                
+                if hasattr(rule, 'hasChangeoverTimeValue') and rule.hasChangeoverTimeValue:
+                    time_val = rule.hasChangeoverTimeValue[0]
+                    self.logger.debug(f"  → hasChangeoverTimeValue: {time_val}")
+                else:
+                    self.logger.warning(f"  → hasChangeoverTimeValue 속성이 없거나 비어있음")
+                
                 if line:
                     line_id = line.name.replace('line_', '')
                     if line_id not in self.changeover_rules:
                         self.changeover_rules[line_id] = []
                     self.changeover_rules[line_id].append(rule)
+                    self.logger.debug(f"  → 라인 {line_id}에 규칙 추가됨")
+                else:
+                    self.logger.warning(f"  → 라인 정보가 없어 규칙 추가 실패")
+            
+            # 최종 결과 로깅
+            for line_id, rules in self.changeover_rules.items():
+                self.logger.info(f"✅ 라인 {line_id}: {len(rules)}개 교체 규칙")
+                # 각 규칙의 상세 내용도 로깅
+                for i, rule in enumerate(rules):
+                    from_cond = rule.hasFromCondition[0] if hasattr(rule, 'hasFromCondition') and rule.hasFromCondition else "None"
+                    to_cond = rule.hasToCondition[0] if hasattr(rule, 'hasToCondition') and rule.hasToCondition else "None"
+                    time_val = rule.hasChangeoverTimeValue[0] if hasattr(rule, 'hasChangeoverTimeValue') and rule.hasChangeoverTimeValue else "None"
+                    self.logger.info(f"  → 규칙 {i+1}: {from_cond} → {to_cond} = {time_val}h")
+        else:
+            self.logger.warning("❌ 온톨로지에 ChangeoverRule 클래스가 없습니다!")
         
         # TimeSlot 인스턴스 추출 (온톨로지 기반)
         self.ontology_timeslots = []
@@ -275,7 +339,7 @@ class ProductionOptimizer:
     
     def _get_capacity_rate(self, product: str, line: str) -> float:
         """
-        제품별 라인별 생산능력 반환 (온톨로지 데이터 우선 활용)
+        제품별 라인별 생산능력 반환 (온톨로지 데이터만 활용)
         Args:
             product: str, 제품명 또는 제품코드
             line: str, 라인명
@@ -290,38 +354,21 @@ class ProductionOptimizer:
                 if ct_rate is not None and ct_rate > 0:
                     return ct_rate
         
-        # 온톨로지에서 찾지 못한 경우 JSON 데이터 사용
-        try:
-            if 'products' in self.json_data and product in self.json_data['products']['products']:
-                product_info = self.json_data['products']['products'][product]
-                if 'lines' in product_info and line in product_info['lines']:
-                    ct_rate = product_info['lines'][line].get('ct_rate', 0.0)
-                    if ct_rate is not None and ct_rate > 0:
-                        return ct_rate
-        except Exception as e:
-            self.logger.warning(f"용량 정보 조회 실패: {product} - {line}")
-        
-        # 생산 불가능한 경우 0.0 반환
+        # 온톨로지에서 찾지 못한 경우 0.0 반환
         return 0.0
     
     def _get_package_count(self, product: str) -> int:
         """
-        개입수 가져오기
+        개입수 가져오기 (온톨로지 데이터만 활용)
+        products.json의 items_per_product 키값에 맞춰 수정됨
         """
-        # 온톨로지에서 개입수 찾기
+        # 온톨로지에서 개입수 찾기 (hasItemsPerProduct 속성 사용)
         if product in self.product_instances:
             instance = self.product_instances[product]
-            if hasattr(instance, 'hasPackageCount') and instance.hasPackageCount:
-                return instance.hasPackageCount[0]
+            if hasattr(instance, 'hasItemsPerProduct') and instance.hasItemsPerProduct:
+                return instance.hasItemsPerProduct[0]
         
-        # JSON 데이터에서 개입수 찾기
-        try:
-            if 'products' in self.json_data and product in self.json_data['products']['products']:
-                product_info = self.json_data['products']['products'][product]
-                return product_info.get('units_per_pack', 0)
-        except:
-            pass
-        
+        # 온톨로지에서 찾지 못한 경우 0 반환
         return 0
 
     def _get_changeover_time(self, from_product: str, to_product: str, line: str) -> float:
@@ -340,39 +387,51 @@ class ProductionOptimizer:
                 self.logger.warning(f"교체 시간 조회 실패: 라인 정보가 없음 (제품: {from_product} → {to_product}), 기본값 0.4h 사용")
                 return 0.4
             
+            self.logger.debug(f"🔍 교체시간 조회: {from_product} → {to_product} @ {line}")
+            
             # 온톨로지에서 교체 규칙 조회
             if line in self.changeover_rules:
                 line_rules = self.changeover_rules[line]
+                self.logger.debug(f"  → 라인 {line}에서 {len(line_rules)}개 규칙 발견")
                 
                 # 제품별 교체 시간 규칙 찾기
-                for rule in line_rules:
+                for i, rule in enumerate(line_rules):
+                    self.logger.debug(f"  → 규칙 {i+1} 검사 중...")
+                    
                     from_rule = rule.hasFromCondition[0] if rule.hasFromCondition else None
                     to_rule = rule.hasToCondition[0] if rule.hasToCondition else None
                     changeover_time = rule.hasChangeoverTimeValue[0] if rule.hasChangeoverTimeValue else None
                     rule_description = rule.hasRuleDescription[0] if rule.hasRuleDescription else "설명 없음"
                     
+                    self.logger.debug(f"    → from_rule: {from_rule}, to_rule: {to_rule}, time: {changeover_time}")
+                    
                     match_changeover = self._match_changeover_rule(from_product, to_product, from_rule, to_rule, line)
+                    
+                    self.logger.debug(f"    → 매칭 결과: {match_changeover}")
                     
                     # 제품 코드 매칭 (실제 제품 코드와 규칙의 from/to 비교)
                     if match_changeover and changeover_time is not None:
-                        self.logger.debug(f"교체 시간 조회 성공: {from_product} → {to_product} @ {line} = {changeover_time}h ({rule_description})")
+                        self.logger.debug(f"✅ 교체 시간 조회 성공: {from_product} → {to_product} @ {line} = {changeover_time}h ({rule_description})")
                         return changeover_time
+                    else:
+                        self.logger.debug(f"    → 매칭 실패 또는 시간값 없음")
                 
                 # 규칙을 찾지 못한 경우 기본값 반환
-                self.logger.warning(f"교체 시간 규칙 없음: {from_product} → {to_product} @ {line}, 기본값 0.4h 사용")
+                self.logger.warning(f"❌ 교체 시간 규칙 없음: {from_product} → {to_product} @ {line}, 기본값 0.4h 사용")
                 return 0.4
             else:
                 # 온톨로지에 해당 라인의 교체 규칙이 없는 경우 기본값 반환
-                self.logger.warning(f"라인 {line}에 대한 교체 규칙이 온톨로지에 없음, 기본값 0.4h 사용")
+                self.logger.warning(f"❌ 라인 {line}에 대한 교체 규칙이 온톨로지에 없음, 기본값 0.4h 사용")
+                self.logger.debug(f"  → 사용 가능한 라인: {list(self.changeover_rules.keys())}")
                 return 0.4
                 
         except Exception as e:
-            self.logger.warning(f"교체 시간 조회 실패: {from_product} → {to_product} @ {line}, 오류: {e}, 기본값 0.4h 사용")
+            self.logger.warning(f"❌ 교체 시간 조회 실패: {from_product} → {to_product} @ {line}, 오류: {e}, 기본값 0.4h 사용")
             return 0.4
     
     def _match_changeover_rule(self, from_product: str, to_product: str, from_rule, to_rule, line: str) -> bool:
         """
-        제품과 교체 규칙 매칭 (rule_type을 키값으로 사용)
+        제품과 교체 규칙 매칭 (온톨로지 기반)
         Args:
             from_product: str, 실제 이전 제품 코드
             to_product: str, 실제 다음 제품 코드
@@ -383,42 +442,61 @@ class ProductionOptimizer:
             bool: 매칭 여부
         """
         try:
-            # 제품 정보에서 비교할 제품 가져오기
-            from_product_info = self._get_product_info(from_product)
-            to_product_info = self._get_product_info(to_product)
+            self.logger.debug(f"🔍 규칙 매칭 시작: {from_product} → {to_product} @ {line}")
+            self.logger.debug(f"  → 규칙 조건: from={from_rule}, to={to_rule}")
             
-            # 제품 정보가 없으면 매칭 실패
-            if not from_product_info or not to_product_info:
+            # 온톨로지에서 제품 인스턴스 조회
+            from_product_instance = self.product_instances.get(from_product)
+            to_product_instance = self.product_instances.get(to_product)
+            
+            self.logger.debug(f"  → from_product_instance: {from_product_instance.name if from_product_instance else 'None'}")
+            self.logger.debug(f"  → to_product_instance: {to_product_instance.name if to_product_instance else 'None'}")
+            
+            # 제품 인스턴스가 없으면 매칭 실패
+            if not from_product_instance or not to_product_instance:
+                self.logger.warning(f"  → 제품 인스턴스가 없어 매칭 실패")
                 return False
             
-            # 라인별 규칙 타입 확인 (제품정보의 키값)
+            # 라인별 규칙 타입 확인 (온톨로지 기반)
             rule_type = self._get_rule_type_for_line(line)
+            self.logger.debug(f"  → 라인 {line}의 규칙 타입: {rule_type}")
             
-            # rule_type을 키값으로 사용하여 제품 정보에서 값 추출
-            from_value = from_product_info.get(rule_type, None)
-            to_value = to_product_info.get(rule_type, None)
+            # 제품 속성 값 추출
+            from_value = self._get_product_attribute_value(from_product_instance, rule_type)
+            to_value = self._get_product_attribute_value(to_product_instance, rule_type)
             
-            # 규칙과 제품 정보 매칭
-            return from_value == from_rule and to_value == to_rule
+            self.logger.debug(f"  → from_value ({rule_type}): {from_value}")
+            self.logger.debug(f"  → to_value ({rule_type}): {to_value}")
+            
+            # 속성 값이 없으면 매칭 실패
+            if from_value is None or to_value is None:
+                self.logger.warning(f"  → 속성 값이 없어 매칭 실패")
+                return False
+            
+            # 규칙 조건과 매칭 확인 (데이터 타입 통일)
+            # from_rule과 to_rule을 정수형으로 변환
+            try:
+                from_rule_int = int(from_rule) if from_rule is not None else None
+                to_rule_int = int(to_rule) if to_rule is not None else None
+                
+                from_match = from_value == from_rule_int
+                to_match = to_value == to_rule_int
+                
+                self.logger.debug(f"  → from_match: {from_value} == {from_rule_int} = {from_match}")
+                self.logger.debug(f"  → to_match: {to_value} == {to_rule_int} = {to_match}")
+                
+            except (ValueError, TypeError) as e:
+                self.logger.warning(f"  → 규칙 값 변환 실패: {e}")
+                return False
+            
+            result = from_match and to_match
+            self.logger.debug(f"  → 최종 매칭 결과: {result}")
+            
+            return result
             
         except Exception as e:
-            self.logger.debug(f"규칙 매칭 실패: {e}")
+            self.logger.error(f"규칙 매칭 중 오류 발생: {e}")
             return False
-    
-    def _get_product_info(self, product_code: str) -> dict:
-        """
-        제품 정보 조회
-        Args:
-            product_code: str, 제품 코드
-        Returns:
-            dict: 제품 정보
-        """
-        try:
-            if 'products' in self.json_data and 'products' in self.json_data['products']:
-                return self.json_data['products']['products'].get(product_code, {})
-        except:
-            pass
-        return {}
     
     def _get_rule_type_for_line(self, line: str) -> str:
         """
@@ -440,24 +518,92 @@ class ProductionOptimizer:
         
         return 'unknown'
     
+    def _get_product_attribute_value(self, product_instance, rule_type: str):
+        """
+        제품 인스턴스에서 규칙 타입에 해당하는 속성 값 추출
+        products.json과 change_over.json의 실제 키값에 맞춰 수정됨
+        Args:
+            product_instance: 제품 온톨로지 인스턴스
+            rule_type: str, 규칙 타입
+        Returns:
+            속성 값 또는 None
+        """
+        try:
+            self.logger.debug(f"🔍 제품 {product_instance.name}에서 {rule_type} 속성 값 추출 중...")
+            
+            # 제품 카테고리 확인
+            category = None
+            if hasattr(product_instance, 'hasCategory') and product_instance.hasCategory:
+                category = product_instance.hasCategory[0]
+                self.logger.debug(f"  → 제품 카테고리: {category}")
+            
+            # 규칙 타입별 매핑 테이블 (change_over.json의 rule_type과 products.json의 키값 매핑)
+            mapping = {
+                "height": "hasHeight",           # height 규칙 → hasHeight 속성 (용기 높이)
+                "items_per_box": "hasItemsPerBox",  # items_per_box 규칙 → hasItemsPerBox 속성 (계산된 값)
+                "product_type": "hasProductType",       # product_type 규칙 → hasProductType 속성 (제품 타입)
+                "market_type": "hasMarketType",         # market_type 규칙 → hasMarketType 속성 (시장 타입)
+                "universal": None                        # universal 규칙 → 특정 속성 없음
+            }
+            
+            # 매핑된 속성명 가져오기
+            attribute_name = mapping.get(rule_type)
+            if not attribute_name:
+                self.logger.debug(f"  → {rule_type} 규칙은 특정 속성이 없음 (universal 등)")
+                return None
+            
+            # 제품에서 해당 속성 값 조회
+            if hasattr(product_instance, attribute_name) and getattr(product_instance, attribute_name):
+                value = getattr(product_instance, attribute_name)[0]
+                self.logger.debug(f"  → {attribute_name}: {value}")
+                return value
+            else:
+                self.logger.debug(f"  → {attribute_name} 속성이 없거나 비어있음")
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"제품 속성 값 추출 중 오류 발생: {e}")
+            return None
+    
     def _get_setup_time(self, line: str) -> float:
         """
-        라인별 작업 준비 시간 반환 (lines.json의 setup_time_hours)
+        라인별 작업 준비 시간 반환 (온톨로지 기반)
         Args:
             line: str, 라인명
         Returns:
             float: 작업 준비 시간 (시간 단위)
         """
-        try:
-            if 'lines' in self.json_data and 'lines' in self.json_data['lines']:
-                line_info = self.json_data['lines']['lines'].get(line, {})
-                setup_time = line_info.get('setup_time_hours', 1.0)  # 기본값 1.0시간
-                self.logger.debug(f"라인 {line}의 setup_time_hours: {setup_time}시간")
+        # 온톨로지에서 라인 인스턴스 조회
+        if line in self.line_instances:
+            line_instance = self.line_instances[line]
+            if hasattr(line_instance, 'hasSetupTime') and line_instance.hasSetupTime:
+                setup_time = line_instance.hasSetupTime[0]
+                self.logger.debug(f"라인 {line}의 setup_time: {setup_time}시간")
                 return setup_time
-        except Exception as e:
-            self.logger.warning(f"라인 {line}의 setup_time_hours 조회 실패: {e}, 기본값 1.0 사용")
         
+        # 온톨로지에서 찾지 못한 경우 기본값 반환
+        self.logger.warning(f"라인 {line}의 setup_time을 온톨로지에서 찾을 수 없어 기본값 1.0 사용")
         return 1.0  # 기본값
+        
+    def _get_cleanup_time(self, line: str) -> float:
+        """
+        라인별 청소 시간 반환 (온톨로지 기반)
+        Args:
+            line: str, 라인명
+        Returns:
+            float: 청소 시간 (시간 단위)
+        """
+        # 온톨로지에서 라인 인스턴스 조회
+        if line in self.line_instances:
+            line_instance = self.line_instances[line]
+            if hasattr(line_instance, 'hasCleanupTime') and line_instance.hasCleanupTime:
+                cleanup_time = line_instance.hasCleanupTime[0]
+                self.logger.debug(f"라인 {line}의 cleanup_time: {cleanup_time}시간")
+                return cleanup_time
+        
+        # 온톨로지에서 찾지 못한 경우 기본값 반환
+        self.logger.warning(f"라인 {line}의 cleanup_time을 온톨로지에서 찾을 수 없어 기본값 2.5 사용")
+        return 2.5  # 기본값
         
     def build_model(self):
         """
@@ -750,7 +896,7 @@ class ProductionOptimizer:
      
     def _get_product_name(self, product_code: str) -> str:
         """
-        제품코드로 제품명 가져오기
+        제품코드로 제품명 가져오기 (온톨로지 기반)
         """
         # 온톨로지에서 제품명 찾기
         if product_code in self.product_instances:
@@ -758,19 +904,12 @@ class ProductionOptimizer:
             if hasattr(instance, 'hasProductName') and instance.hasProductName:
                 return instance.hasProductName[0]
         
-        # JSON 데이터에서 제품명 찾기
-        try:
-            if 'products' in self.json_data and product_code in self.json_data['products']['products']:
-                product_info = self.json_data['products']['products'][product_code]
-                return product_info.get('name', product_code)
-        except:
-            pass
-        
-        return product_code  # 찾지 못하면 제품코드 반환
+        # 온톨로지에서 찾지 못한 경우 제품코드 반환
+        return product_code
     
     def _get_track_count(self, line: str) -> int:
         """
-        라인별 트랙 수 반환
+        라인별 트랙 수 반환 (온톨로지 기반)
         Args:
             line: str, 라인명
         Returns:
@@ -782,14 +921,8 @@ class ProductionOptimizer:
             if hasattr(line_instance, 'hasTrackCount') and line_instance.hasTrackCount:
                 return line_instance.hasTrackCount[0]
         
-        # 온톨로지에서 찾지 못한 경우 JSON 데이터 사용
-        try:
-            if 'lines' in self.json_data and line in self.json_data['lines']['lines']:
-                line_info = self.json_data['lines']['lines'][line]
-                return line_info.get('tracks', 1)  # 기본값 1
-        except Exception as e:
-            self.logger.warning(f"트랙 수 조회 실패: {line}")
-        
+        # 온톨로지에서 찾지 못한 경우 기본값 반환
+        self.logger.warning(f"라인 {line}의 트랙 수를 온톨로지에서 찾을 수 없어 기본값 1 사용")
         return 1  # 기본값
 
     def _calculate_required_time_slots(self, product: str, line: str) -> int:
@@ -951,7 +1084,7 @@ class ProductionOptimizer:
                                 'to_product': first_product_current,
                                 'changeover_time': changeover_time
                             })
-                            self.logger.info(f"교체 이벤트 추가 (시간대간): {last_product_previous} → {first_product_current} @ {line} {previous_time_slot}→{time_slot} = {changeover_time}시간")
+                            self.logger.info(f"교체 이벤트 추가 (시간대간): {last_product_previous} → {first_product_current} @ {line} {previous_time_slot} → {time_slot} = {changeover_time}시간")
                 
                 # 3. changeover_time 변수 확인 및 실제 교체 원인 분석
                 changeover_time = value(self.variables['changeover_time'][line, time_slot])

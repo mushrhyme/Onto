@@ -119,10 +119,16 @@ def create_product_instances(onto, json_data, order_data):
             product.hasCategory = [info['category']]
             product.hasProductType = [info['product_type']]
             product.hasWeight = [info['weight']]
-            product.hasPackageCount = [info['units_per_pack']]
+            product.hasHeight = [info['height']]  # height 필드에서 직접 가져오기
+            product.hasItemsPerProduct = [info['items_per_product']]
             product.hasProductsPerBox = [info['products_per_box']]
-            if info.get('changeover_group') is not None:
-                product.hasChangeoverGroup = [str(info['changeover_group'])]
+            
+            # items_per_box 계산값 설정
+            items_per_box = info['items_per_product'] * info['products_per_box']
+            product.hasItemsPerBox = [items_per_box]
+            
+            if info.get('market_type') is not None:
+                product.hasMarketType = [info['market_type']]
             products[product_code] = product
     return products  # {'P001': <onto.Product ...>, ...}
 
@@ -173,8 +179,8 @@ def create_changeover_rule_instances(onto, json_data, lines):
             for rule in rule_info['rules']:
                 rule_inst = onto.ChangeoverRule(f"rule_{line_id}_{counter}")
                 rule_inst.appliesTo = [lines[line_id]]
-                rule_inst.hasFromCondition = [str(rule.get('from', 'any'))]
-                rule_inst.hasToCondition = [str(rule.get('to', 'any'))]
+                rule_inst.hasFromCondition = [rule.get('from', 0)]
+                rule_inst.hasToCondition = [rule.get('to', 0)]
                 rule_inst.hasChangeoverTimeValue = [rule['time']]
                 rule_inst.hasRuleDescription = [rule['description']]
                 

@@ -13,13 +13,13 @@ class ConstraintManager:
         self.line_constraints = optimizer.line_constraints
         self.valid_product_line_combinations = optimizer.valid_product_line_combinations
         self.order_data = optimizer.order_data
-        self.json_data = optimizer.json_data
         self._get_product_name = optimizer._get_product_name
         self._get_capacity_rate = optimizer._get_capacity_rate
         self._get_track_count = optimizer._get_track_count
         self._get_package_count = optimizer._get_package_count
         self._get_changeover_time = optimizer._get_changeover_time
         self._get_setup_time = optimizer._get_setup_time
+        self._get_cleanup_time = optimizer._get_cleanup_time
         self._get_max_working_hours = optimizer._get_max_working_hours
         self.MAX_POSITIONS = optimizer.MAX_POSITIONS  # 시간대 내 최대 생산 제품 수
 
@@ -294,10 +294,9 @@ class ConstraintManager:
             )
             
             last_time_slot = self.time_slots[-1]
-            line_info = self.json_data['lines']['lines'].get(line, {})
-            cleaning_time = line_info.get('cleanup_time_hours', 2.5)
+            cleanup_time = self._get_cleanup_time(line)
             self.model += (
-                self.variables['cleaning_time'][line, last_time_slot] == cleaning_time,
+                self.variables['cleaning_time'][line, last_time_slot] == cleanup_time,
                 f"cleaning_time_{line}"
             )
             

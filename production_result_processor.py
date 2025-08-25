@@ -18,7 +18,6 @@ class ProductionResultProcessor:
         # 필요한 데이터들을 optimizer에서 가져오기
         self.ontology_manager = optimizer.ontology_manager
         self.onto = optimizer.onto
-        self.json_data = optimizer.json_data
         self.order_data = optimizer.order_data
         self.logger = optimizer.logger
         self.lines = optimizer.lines

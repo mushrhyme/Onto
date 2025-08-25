@@ -97,24 +97,44 @@ class ConstraintConflictMonitor:
                     )
     
     def _get_line_hourly_capacity(self, line_id):
-        """라인별 시간당 생산 능력 반환 (박스/시간)"""
+        """라인별 시간당 생산 능력 반환 (온톨로지 기반)"""
         try:
-            # 실제 생산 능력 계산: CT Rate × 트랙 수 × 60분 ÷ 개입수
-            if hasattr(self, 'json_data') and 'lines' in self.json_data:
-                line_info = self.json_data['lines']['lines'].get(line_id, {})
-                if line_info:
-                    # 기본값 설정
-                    ct_rate = line_info.get('ct_rate', 100)  # 분당 생산 개수
-                    tracks = line_info.get('tracks', 1)      # 트랙 수
+            # 온톨로지에서 라인 인스턴스 조회
+            if hasattr(self, 'ontology_manager') and self.ontology_manager:
+                onto = self.ontology_manager.onto
+                if hasattr(onto, 'Line'):
+                    # 라인 인스턴스 찾기
+                    line_instance = None
+                    for line_inst in onto.Line.instances():
+                        if line_inst.name.replace('line_', '') == line_id:
+                            line_instance = line_inst
+                            break
                     
-                    # 시간당 박스 생산량 계산
-                    hourly_capacity = (ct_rate * tracks * 60) / 1  # 개입수는 1로 가정
-                    
-                    self.logger.info(f"라인 {line_id} 실제 생산능력: {hourly_capacity:.0f}박스/시간 (CT: {ct_rate}, 트랙: {tracks})")
-                    return hourly_capacity
+                    if line_instance:
+                        # 온톨로지에서 CT Rate와 트랙 수 조회
+                        ct_rate = 100  # 기본값
+                        tracks = 1      # 기본값
+                        
+                        # LineProductRelation에서 CT Rate 조회 (첫 번째 제품 기준)
+                        if hasattr(onto, 'LineProductRelation'):
+                            for relation in onto.LineProductRelation.instances():
+                                if relation.hasLine and relation.hasLine[0].name.replace('line_', '') == line_id:
+                                    if hasattr(relation, 'hasCTRate') and relation.hasCTRate:
+                                        ct_rate = relation.hasCTRate[0]
+                                        break
+                        
+                        # Line에서 트랙 수 조회
+                        if hasattr(line_instance, 'hasTrackCount') and line_instance.hasTrackCount:
+                            tracks = line_instance.hasTrackCount[0]
+                        
+                        # 시간당 박스 생산량 계산
+                        hourly_capacity = (ct_rate * tracks * 60) / 1  # 개입수는 1로 가정
+                        
+                        self.logger.info(f"라인 {line_id} 온톨로지 기반 생산능력: {hourly_capacity:.0f}박스/시간 (CT: {ct_rate}, 트랙: {tracks})")
+                        return hourly_capacity
             
-            # 데이터가 없을 경우 기본값 사용
-            self.logger.warning(f"라인 {line_id} 생산능력 데이터 없음, 기본값 사용")
+            # 온톨로지에서 찾지 못한 경우 기본값 사용
+            self.logger.warning(f"라인 {line_id} 생산능력을 온톨로지에서 찾을 수 없어 기본값 사용")
             return 800  # 기본값 800박스/시간
             
         except Exception as e:
@@ -256,7 +276,7 @@ def main():
     
     logger.info("🚀 v6 생산 최적화 시스템 시작 (제약조건 충돌 모니터링 포함)")
     
-    # 제약조건 충돌 모니터 초기화 (나중에 json_data 전달)
+    # 제약조건 충돌 모니터 초기화
     conflict_monitor = ConstraintConflictMonitor(logger)
     
     # 전체 프로세스 시작 시간 기록
@@ -350,9 +370,6 @@ def main():
         # 온톨로지 매니저에서 order_data와 time_slots 가져오기
         order_data = ontology_manager._order_data
         time_slots = [f"T{i+1}" for i in range(5)]  # 5일치 시간대
-        
-        # conflict_monitor에 json_data 전달 (실제 생산능력 계산용)
-        conflict_monitor.json_data = ontology_manager._changeover_data
         
         # 생산량 vs 시간 제약 충돌 검사 (활성화된 라인만)
         conflict_monitor.check_production_vs_time_conflict(
