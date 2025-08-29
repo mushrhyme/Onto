@@ -136,7 +136,7 @@ def create_production_segments(onto, json_data, order_data, lines, products, day
     return segments  # [<onto.ProductionSegment ...>, ...]
 
 
-def connect_next_segments_and_calculate_changeover(onto, segments, json_data, get_date_index_func=None):
+def connect_next_segments_and_calculate_changeover(onto, segments, json_data, get_date_index_func=None, active_lines=None):
     """
     세그먼트들을 시간순으로 연결하고 교체 시간 계산
     Args:
@@ -144,6 +144,7 @@ def connect_next_segments_and_calculate_changeover(onto, segments, json_data, ge
         segments: list, 세그먼트 인스턴스 리스트
         json_data: dict, lines/products/changeover 데이터
         get_date_index_func: function, 날짜 인덱스 반환 함수 (선택사항)
+        active_lines: list, 활성화된 라인 ID 리스트 (None이면 모든 라인 처리)
     """
     if not segments:
         return
@@ -159,6 +160,10 @@ def connect_next_segments_and_calculate_changeover(onto, segments, json_data, ge
     
     # 각 라인별로 세그먼트 연결 및 교체 시간 계산
     for line_id, line_segments in segments_by_line.items():
+        # 활성화되지 않은 라인은 건너뛰기
+        if active_lines is not None and line_id not in active_lines:
+            continue
+            
         if len(line_segments) < 2:
             continue
             
@@ -238,9 +243,14 @@ def calculate_changeover_time(json_data, line_id, from_product, to_product):
             line_rules = json_data['changeover']['changeover_rules'].get(line_id, {})
             
             if 'rules' in line_rules:
-                # 제품별 교체 조건 확인
-                from_condition = from_product.hasChangeoverGroup[0] if from_product.hasChangeoverGroup else "any"
-                to_condition = to_product.hasChangeoverGroup[0] if to_product.hasChangeoverGroup else "any"
+                # 제품별 교체 조건 확인 - hasChangeoverGroup 속성 안전하게 접근
+                try:
+                    from_condition = from_product.hasChangeoverGroup[0] if hasattr(from_product, 'hasChangeoverGroup') and from_product.hasChangeoverGroup else "any"
+                    to_condition = to_product.hasChangeoverGroup[0] if hasattr(to_product, 'hasChangeoverGroup') and to_product.hasChangeoverGroup else "any"
+                except (AttributeError, IndexError):
+                    # hasChangeoverGroup 속성이 없거나 비어있는 경우
+                    from_condition = "any"
+                    to_condition = "any"
                 
                 # 정확한 매칭 규칙 찾기
                 for rule in line_rules['rules']:

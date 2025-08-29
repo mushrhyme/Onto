@@ -114,22 +114,28 @@ def create_product_instances(onto, json_data, order_data):
     for product_code, info in json_data['products']['products'].items():
         if product_code in order_data:
             product = onto.Product(f"product_{product_code}")
-            product.hasProductCode = [product_code]
-            product.hasProductName = [info['name']]
-            product.hasCategory = [info['category']]
-            product.hasProductType = [info['product_type']]
-            product.hasWeight = [info['weight']]
-            product.hasHeight = [info['height']]  # height 필드에서 직접 가져오기
-            product.hasItemsPerProduct = [info['items_per_product']]
-            product.hasProductsPerBox = [info['products_per_box']]
-            
-            # items_per_box 계산값 설정
-            items_per_box = info['items_per_product'] * info['products_per_box']
-            product.hasItemsPerBox = [items_per_box]
-            
-            if info.get('market_type') is not None:
-                product.hasMarketType = [info['market_type']]
-            products[product_code] = product
+            product.hasProductCode = [product_code]  # 예: ['101003377']
+            if 'name' in info:
+                product.hasProductName = [info['name']]  # 예: ['보글보글부대찌개면(멀티팩)']
+            if 'category' in info:
+                product.hasCategory = [info['category']]  # 예: ['봉지면']
+            if 'product_type' in info:
+                product.hasProductType = [info['product_type']]  # 예: ['굵은면']
+            if 'weight' in info:
+                product.hasWeight = [info['weight']]  # 예: [127]
+            if 'height' in info:
+                product.hasHeight = [info['height']]  # 예: [값이 없을 수도 있음]
+            if 'items_per_product' in info:
+                product.hasItemsPerProduct = [info['items_per_product']]  # 예: [4]
+            if 'products_per_box' in info:
+                product.hasProductsPerBox = [info['products_per_box']]  # 예: [8]
+            # items_per_box 계산 (둘 다 있을 때만)
+            if 'items_per_product' in info and 'products_per_box' in info:
+                items_per_box = info['items_per_product'] * info['products_per_box']
+                product.hasItemsPerBox = [items_per_box]  # 예: [32]
+            if 'market_type' in info and info['market_type'] is not None:
+                product.hasMarketType = [info['market_type']]  # 예: ['domestic']
+            products[product_code] = product  # {'101003377': <onto.Product ...>, ...}
     return products  # {'P001': <onto.Product ...>, ...}
 
 
@@ -190,9 +196,6 @@ def create_changeover_rule_instances(onto, json_data, lines):
                 changeover_rules.append(rule_inst)
                 counter += 1
                 
-                # 디버깅을 위한 로그 출력 (선택사항)
-                print(f"✅ 교체 규칙 생성: 라인 {line_id}, 타입 {rule_type}, {rule['from']}→{rule['to']}, 시간 {rule['time']}h")
-    
     return changeover_rules  # [<onto.ChangeoverRule ...>, ...]
 
 
@@ -369,7 +372,7 @@ def _setup_timeslot_sequence(timeslots, day_names, shift_names):
                     timeslots[next_name].previousTimeSlot = [current_timeslot]
 
 
-def create_production_segment_instances(onto, lines, days, shifts, timeslots, products, order_data):
+def create_production_segment_instances(onto, lines, days, shifts, timeslots, products, order_data, active_lines=None):
     """
     ProductionSegment 인스턴스 생성 (수정된 함수)
     Args:
@@ -380,19 +383,29 @@ def create_production_segment_instances(onto, lines, days, shifts, timeslots, pr
         timeslots: dict, TimeSlot 인스턴스들
         products: dict, Product 인스턴스들
         order_data: dict, 제품별 생산지시량
+        active_lines: list, 활성화된 라인 ID 리스트 (None이면 모든 라인 처리)
     Returns:
         segments: list, [<onto.ProductionSegment ...>, ...]
     """
     segments = []
     counter = 0
     
+    # 활성화된 라인만 처리 (기본값: 모든 라인)
+    if active_lines is None:
+        active_lines = list(lines.keys())
+    
+    print(f"🔍 활성화된 라인만 세그먼트 생성: {active_lines}")
+    
     # 각 제품별로 필요한 생산 세그먼트 생성
     for product_code, target_boxes in order_data.items():
         if product_code in products:
             product = products[product_code]
             
-            # 해당 제품을 생산할 수 있는 라인들 찾기
+            # 활성화된 라인만 처리
             for line_id, line in lines.items():
+                if line_id not in active_lines:
+                    continue  # 활성화되지 않은 라인은 건너뛰기
+                    
                 # 제품-라인 관계 확인 (간단한 검증)
                 if hasattr(line, 'hasTeam'):  # 라인이 팀에 할당되어 있으면 유효한 라인
                     # 기본 세그먼트 생성 (실제 최적화에서 세부 조정)
@@ -420,5 +433,5 @@ def create_production_segment_instances(onto, lines, days, shifts, timeslots, pr
                     segments.append(segment)
                     counter += 1
     
-    print(f"✅ ProductionSegment 인스턴스 생성 완료: {len(segments)}개")
+    print(f"✅ ProductionSegment 인스턴스 생성 완료: {len(segments)}개 (활성 라인: {len(active_lines)}개)")
     return segments  # [<onto.ProductionSegment ...>, ...] 

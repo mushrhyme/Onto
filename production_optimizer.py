@@ -150,55 +150,26 @@ class ProductionOptimizer:
         # 제품 인스턴스 추출 (제품코드 기준)
         self.product_instances = {}
         if hasattr(self.onto, 'Product'):
-            self.logger.info(f"🔍 Product 인스턴스 {len(list(self.onto.Product.instances()))}개 발견")
             for product_instance in self.onto.Product.instances():
-                self.logger.info(f"🔍 제품 {product_instance.name} 처리 중...")
-                
                 # 제품코드 우선, 없으면 제품명 사용
                 if hasattr(product_instance, 'hasProductCode') and product_instance.hasProductCode:
                     product_code = product_instance.hasProductCode[0]
-                    self.logger.info(f"  → hasProductCode: {product_code}")
                 else:
-                    self.logger.info(f"  → hasProductCode 속성이 없거나 비어있음")
                     product_code = None
                 
                 if hasattr(product_instance, 'hasProductName') and product_instance.hasProductName:
                     product_name = product_instance.hasProductName[0]
-                    self.logger.info(f"  → hasProductName: {product_name}")
                 else:
-                    self.logger.info(f"  → hasProductName 속성이 없거나 비어있음")
                     product_name = product_instance.name
-                
-                # 모든 제품 속성 확인
-                self.logger.info(f"  → 모든 속성 목록:")
-                for attr_name in dir(product_instance):
-                    if not attr_name.startswith('_') and not callable(getattr(product_instance, attr_name)):
-                        try:
-                            attr_value = getattr(product_instance, attr_name)
-                            if hasattr(attr_value, '__iter__') and not isinstance(attr_value, str):
-                                # 리스트나 다른 반복 가능한 객체인 경우
-                                if len(attr_value) > 0:
-                                    self.logger.info(f"    → {attr_name}: {attr_value[0] if hasattr(attr_value, '__getitem__') else attr_value}")
-                                else:
-                                    self.logger.info(f"    → {attr_name}: (비어있음)")
-                            else:
-                                self.logger.info(f"    → {attr_name}: {attr_value}")
-                        except Exception as e:
-                            self.logger.info(f"    → {attr_name}: 읽기 실패 ({e})")
-                
+                            
                 if product_code:
                     self.product_instances[product_code] = product_instance
-                    self.logger.info(f"  → 제품코드 {product_code}로 매핑됨")
                 else:
                     self.product_instances[product_name] = product_instance
-                    self.logger.info(f"  → 제품명 {product_name}으로 매핑됨")
             
-            # 최종 결과 로깅
-            self.logger.info(f"✅ 제품 인스턴스 매핑 완료: {len(self.product_instances)}개")
-            for key, instance in self.product_instances.items():
-                self.logger.info(f"  → {key} → {instance.name}")
+            self.logger.info(f"제품 인스턴스 매핑 완료: {len(self.product_instances)}개")
         else:
-            self.logger.warning("❌ 온톨로지에 Product 클래스가 없습니다!")
+            self.logger.warning("온톨로지에 Product 클래스가 없습니다!")
         
         # 라인-제품 관계 추출 (제품코드 기준)
         self.line_product_relations = {}
@@ -223,56 +194,25 @@ class ProductionOptimizer:
         # 교체 규칙 추출
         self.changeover_rules = {}
         if hasattr(self.onto, 'ChangeoverRule'):
-            self.logger.info(f"🔍 ChangeoverRule 인스턴스 {len(list(self.onto.ChangeoverRule.instances()))}개 발견")
             for rule in self.onto.ChangeoverRule.instances():
-                self.logger.debug(f"🔍 규칙 {rule.name} 처리 중...")
-                
                 # 규칙의 속성들 확인
                 if hasattr(rule, 'appliesTo') and rule.appliesTo:
                     line = rule.appliesTo[0]
-                    self.logger.debug(f"  → appliesTo: {line.name if line else 'None'}")
                 else:
-                    self.logger.warning(f"  → appliesTo 속성이 없거나 비어있음")
+                    self.logger.warning(f"appliesTo 속성이 없거나 비어있음")
                     line = None
-                
-                if hasattr(rule, 'hasFromCondition') and rule.hasFromCondition:
-                    from_cond = rule.hasFromCondition[0]
-                    self.logger.debug(f"  → hasFromCondition: {from_cond}")
-                else:
-                    self.logger.warning(f"  → hasFromCondition 속성이 없거나 비어있음")
-                
-                if hasattr(rule, 'hasToCondition') and rule.hasToCondition:
-                    to_cond = rule.hasToCondition[0]
-                    self.logger.debug(f"  → hasToCondition: {to_cond}")
-                else:
-                    self.logger.warning(f"  → hasToCondition 속성이 없거나 비어있음")
-                
-                if hasattr(rule, 'hasChangeoverTimeValue') and rule.hasChangeoverTimeValue:
-                    time_val = rule.hasChangeoverTimeValue[0]
-                    self.logger.debug(f"  → hasChangeoverTimeValue: {time_val}")
-                else:
-                    self.logger.warning(f"  → hasChangeoverTimeValue 속성이 없거나 비어있음")
                 
                 if line:
                     line_id = line.name.replace('line_', '')
                     if line_id not in self.changeover_rules:
                         self.changeover_rules[line_id] = []
                     self.changeover_rules[line_id].append(rule)
-                    self.logger.debug(f"  → 라인 {line_id}에 규칙 추가됨")
                 else:
-                    self.logger.warning(f"  → 라인 정보가 없어 규칙 추가 실패")
+                    self.logger.warning(f"라인 정보가 없어 규칙 추가 실패")
             
-            # 최종 결과 로깅
-            for line_id, rules in self.changeover_rules.items():
-                self.logger.info(f"✅ 라인 {line_id}: {len(rules)}개 교체 규칙")
-                # 각 규칙의 상세 내용도 로깅
-                for i, rule in enumerate(rules):
-                    from_cond = rule.hasFromCondition[0] if hasattr(rule, 'hasFromCondition') and rule.hasFromCondition else "None"
-                    to_cond = rule.hasToCondition[0] if hasattr(rule, 'hasToCondition') and rule.hasToCondition else "None"
-                    time_val = rule.hasChangeoverTimeValue[0] if hasattr(rule, 'hasChangeoverTimeValue') and rule.hasChangeoverTimeValue else "None"
-                    self.logger.info(f"  → 규칙 {i+1}: {from_cond} → {to_cond} = {time_val}h")
+            self.logger.info(f"교체 규칙 추출 완료: {len(self.changeover_rules)}개 라인")
         else:
-            self.logger.warning("❌ 온톨로지에 ChangeoverRule 클래스가 없습니다!")
+            self.logger.warning("온톨로지에 ChangeoverRule 클래스가 없습니다!")
         
         # TimeSlot 인스턴스 추출 (온톨로지 기반)
         self.ontology_timeslots = []
@@ -282,9 +222,9 @@ class ProductionOptimizer:
                 timeslot_name = timeslot_instance.hasTimeSlotName[0] if timeslot_instance.hasTimeSlotName else timeslot_instance.name
                 self.ontology_timeslots.append(timeslot_name)
                 self.timeslot_instances[timeslot_name] = timeslot_instance
-            self.logger.info(f"✅ 온톨로지에서 TimeSlot 인스턴스 {len(self.ontology_timeslots)}개 추출 완료")
+            self.logger.info(f"온톨로지에서 TimeSlot 인스턴스 {len(self.ontology_timeslots)}개 추출 완료")
         else:
-            self.logger.error("❌ 온톨로지에 TimeSlot 클래스가 없습니다. 시스템을 종료합니다.")
+            self.logger.error("온톨로지에 TimeSlot 클래스가 없습니다. 시스템을 종료합니다.")
             raise ValueError("TimeSlot 클래스가 온톨로지에 정의되지 않았습니다.")
         
         # valid_product_line_combinations 생성 (ConstraintManager에서 필요)
@@ -298,7 +238,7 @@ class ProductionOptimizer:
         
         self.logger.info(f"온톨로지 데이터 추출 완료: {len(self.lines)}개 라인, {len(self.products)}개 제품")
         self.logger.info(f"유효한 제품-라인 조합: {len(self.valid_product_line_combinations)}개")
-        self.logger.info(f"시간대: {len(self.ontology_timeslots)}개 (온톨로지 기반)")
+        self.logger.info(f"시간대: {len(self.ontology_timeslots)}개")
     
     def _setup_active_lines(self, active_lines):
         """
@@ -330,7 +270,6 @@ class ProductionOptimizer:
             timeslot = self.timeslot_instances[timeslot_name]
             if hasattr(timeslot, 'hasWorkingHours') and timeslot.hasWorkingHours:
                 working_hours = timeslot.hasWorkingHours[0]
-                self.logger.debug(f"✅ 온톨로지에서 {timeslot_name} 작업시간 조회: {working_hours}시간")
                 return working_hours
         
         # 온톨로지에서 찾지 못한 경우 오류
@@ -359,15 +298,15 @@ class ProductionOptimizer:
     
     def _get_package_count(self, product: str) -> int:
         """
-        개입수 가져오기 (온톨로지 데이터만 활용)
-        products.json의 items_per_product 키값에 맞춰 수정됨
+        박스당 제품 수 가져오기 (온톨로지 데이터 활용)
+        hasItemsPerBox 속성 사용 (박스당 제품 수)
         """
-        # 온톨로지에서 개입수 찾기 (hasItemsPerProduct 속성 사용)
+        # 온톨로지에서 박스당 제품 수 찾기 (hasItemsPerBox 속성 사용)
         if product in self.product_instances:
             instance = self.product_instances[product]
-            if hasattr(instance, 'hasItemsPerProduct') and instance.hasItemsPerProduct:
-                return instance.hasItemsPerProduct[0]
-        
+            if hasattr(instance, 'hasItemsPerBox') and instance.hasItemsPerBox:
+                return instance.hasItemsPerBox[0]
+    
         # 온톨로지에서 찾지 못한 경우 0 반환
         return 0
 
@@ -382,6 +321,14 @@ class ProductionOptimizer:
             float: 교체 시간 (시간 단위)
         """
         try:
+            # 디버깅: 입력 파라미터 상세 정보
+            self.logger.debug(f"🔍 _get_changeover_time 함수 호출:")
+            self.logger.debug(f"  → from_product: {from_product} (타입: {type(from_product)})")
+            self.logger.debug(f"  → to_product: {to_product} (타입: {type(to_product)})")
+            self.logger.debug(f"  → line: {line} (타입: {type(line)})")
+            self.logger.debug(f"  → self.lines: {self.lines}")
+            self.logger.debug(f"  → self.changeover_rules.keys(): {list(self.changeover_rules.keys()) if hasattr(self, 'changeover_rules') else 'None'}")
+            
             # line 파라미터 검증
             if not line:
                 self.logger.warning(f"교체 시간 조회 실패: 라인 정보가 없음 (제품: {from_product} → {to_product}), 기본값 0.4h 사용")
@@ -418,6 +365,7 @@ class ProductionOptimizer:
                 
                 # 규칙을 찾지 못한 경우 기본값 반환
                 self.logger.warning(f"❌ 교체 시간 규칙 없음: {from_product} → {to_product} @ {line}, 기본값 0.4h 사용")
+                print(from_rule, to_rule, rule_description)
                 return 0.4
             else:
                 # 온톨로지에 해당 라인의 교체 규칙이 없는 경우 기본값 반환
@@ -449,32 +397,22 @@ class ProductionOptimizer:
             from_product_instance = self.product_instances.get(from_product)
             to_product_instance = self.product_instances.get(to_product)
             
-            self.logger.debug(f"  → from_product_instance: {from_product_instance.name if from_product_instance else 'None'}")
-            self.logger.debug(f"  → to_product_instance: {to_product_instance.name if to_product_instance else 'None'}")
-            
             # 제품 인스턴스가 없으면 매칭 실패
             if not from_product_instance or not to_product_instance:
-                self.logger.warning(f"  → 제품 인스턴스가 없어 매칭 실패")
                 return False
             
             # 라인별 규칙 타입 확인 (온톨로지 기반)
             rule_type = self._get_rule_type_for_line(line)
-            self.logger.debug(f"  → 라인 {line}의 규칙 타입: {rule_type}")
             
             # 제품 속성 값 추출
             from_value = self._get_product_attribute_value(from_product_instance, rule_type)
             to_value = self._get_product_attribute_value(to_product_instance, rule_type)
             
-            self.logger.debug(f"  → from_value ({rule_type}): {from_value}")
-            self.logger.debug(f"  → to_value ({rule_type}): {to_value}")
-            
             # 속성 값이 없으면 매칭 실패
             if from_value is None or to_value is None:
-                self.logger.warning(f"  → 속성 값이 없어 매칭 실패")
                 return False
             
             # 규칙 조건과 매칭 확인 (데이터 타입 통일)
-            # from_rule과 to_rule을 정수형으로 변환
             try:
                 from_rule_int = int(from_rule) if from_rule is not None else None
                 to_rule_int = int(to_rule) if to_rule is not None else None
@@ -482,17 +420,10 @@ class ProductionOptimizer:
                 from_match = from_value == from_rule_int
                 to_match = to_value == to_rule_int
                 
-                self.logger.debug(f"  → from_match: {from_value} == {from_rule_int} = {from_match}")
-                self.logger.debug(f"  → to_match: {to_value} == {to_rule_int} = {to_match}")
-                
-            except (ValueError, TypeError) as e:
-                self.logger.warning(f"  → 규칙 값 변환 실패: {e}")
+            except (ValueError, TypeError):
                 return False
             
-            result = from_match and to_match
-            self.logger.debug(f"  → 최종 매칭 결과: {result}")
-            
-            return result
+            return from_match and to_match
             
         except Exception as e:
             self.logger.error(f"규칙 매칭 중 오류 발생: {e}")
@@ -540,7 +471,7 @@ class ProductionOptimizer:
             # 규칙 타입별 매핑 테이블 (change_over.json의 rule_type과 products.json의 키값 매핑)
             mapping = {
                 "height": "hasHeight",           # height 규칙 → hasHeight 속성 (용기 높이)
-                "items_per_box": "hasItemsPerBox",  # items_per_box 규칙 → hasItemsPerBox 속성 (계산된 값)
+                "items_per_product": "hasItemsPerProduct",  # items_per_box 규칙 → hasItemsPerBox 속성 (계산된 값)
                 "product_type": "hasProductType",       # product_type 규칙 → hasProductType 속성 (제품 타입)
                 "market_type": "hasMarketType",         # market_type 규칙 → hasMarketType 속성 (시장 타입)
                 "universal": None                        # universal 규칙 → 특정 속성 없음
@@ -578,11 +509,9 @@ class ProductionOptimizer:
             line_instance = self.line_instances[line]
             if hasattr(line_instance, 'hasSetupTime') and line_instance.hasSetupTime:
                 setup_time = line_instance.hasSetupTime[0]
-                self.logger.debug(f"라인 {line}의 setup_time: {setup_time}시간")
                 return setup_time
         
         # 온톨로지에서 찾지 못한 경우 기본값 반환
-        self.logger.warning(f"라인 {line}의 setup_time을 온톨로지에서 찾을 수 없어 기본값 1.0 사용")
         return 1.0  # 기본값
         
     def _get_cleanup_time(self, line: str) -> float:
@@ -598,11 +527,9 @@ class ProductionOptimizer:
             line_instance = self.line_instances[line]
             if hasattr(line_instance, 'hasCleanupTime') and line_instance.hasCleanupTime:
                 cleanup_time = line_instance.hasCleanupTime[0]
-                self.logger.debug(f"라인 {line}의 cleanup_time: {cleanup_time}시간")
                 return cleanup_time
         
         # 온톨로지에서 찾지 못한 경우 기본값 반환
-        self.logger.warning(f"라인 {line}의 cleanup_time을 온톨로지에서 찾을 수 없어 기본값 2.5 사용")
         return 2.5  # 기본값
         
     def build_model(self):
@@ -610,9 +537,6 @@ class ProductionOptimizer:
         MILP 모델 구축 (단순화된 구조)
         """
         self.logger.info("=== MILP 모델 구축 시작 (단순화된 구조) ===")
-        
-        # 모델 구축 시작 시간 기록
-        build_start_time = time.time()
         
         # 모델 생성
         self.model = LpProblem("Production_Scheduling_Simplified", LpMinimize)
@@ -630,17 +554,7 @@ class ProductionOptimizer:
         # 목적함수 설정
         self._set_objective_function()
         
-        # 모델 구축 종료 시간 기록 및 소요 시간 계산
-        build_end_time = time.time()
-        build_elapsed_time = build_end_time - build_start_time
-        
-        # 소요 시간을 분과 초로 변환
-        build_minutes = int(build_elapsed_time // 60)
-        build_seconds = int(build_elapsed_time % 60)
-        
-        self.logger.info("=== MILP 모델 구축 완료 (단순화된 구조) ===")
-        self.logger.info(f"⏱️ 모델 구축 소요 시간: {build_minutes}분 {build_seconds}초 ({build_elapsed_time:.2f}초)")
-        self.logger.info("🎯 단순화 효과: 변수 수 대폭 감소, 메모리 사용량 최적화")
+        self.logger.info("MILP 모델 구축 완료 (단순화된 구조)")
     
     def _create_variables(self):
         """
@@ -656,19 +570,15 @@ class ProductionOptimizer:
                 ct_rate = self._get_capacity_rate(product, line)
                 if ct_rate > 0:  # CT Rate가 0보다 큰 경우만 유효
                     self.valid_product_line_combinations.append((product, line))
-                    self.logger.debug(f"유효한 조합: {product} - {line} (CT Rate: {ct_rate})")
         
         self.logger.info(f"유효한 제품-라인 조합: {len(self.valid_product_line_combinations)}개")
         
         # 유효한 조합이 없으면 기본값 설정
         if len(self.valid_product_line_combinations) == 0:
-            self.logger.warning("⚠️ 유효한 제품-라인 조합이 없습니다!")
-            self.logger.warning("모든 제품-라인 조합을 기본값으로 설정합니다.")
             # 모든 제품-라인 조합을 기본값으로 설정
             for product in self.products:
                 for line in self.lines:
                     self.valid_product_line_combinations.append((product, line))
-            self.logger.info(f"기본 제품-라인 조합 설정 완료: {len(self.valid_product_line_combinations)}개")
         
         # === 핵심 변수들만 유지 ===
         
@@ -762,24 +672,9 @@ class ProductionOptimizer:
                 range(len(self.ontology_timeslots) - required_slots + 1),
                 cat=LpBinary
             )
-        self.logger.info(f"블록 시작 변수 생성 완료: {len(self.variables['block_start'])}개")
+
         
-        self.logger.info(f"변수 생성 완료: {len(self.variables)}개 변수 그룹 (온톨로지 기반)")
-        self.logger.info("제거된 변수: continuous_production, product_order, adjacent_changeover, production_start, production_end")
-        self.logger.info("변수 수 대폭 감소: O(P×L×T²) → O(P×L×T)")
-        self.logger.info(f"새로 추가된 변수: sequence (시간대 내 제품 순서)")
-        self.logger.info(f"✅ 온톨로지 기반 시간대 사용: {len(self.ontology_timeslots)}개")
-        
-        # sequence 변수 생성 확인
-        if 'sequence' in self.variables:
-            sequence_count = len(self.variables['sequence'])
-            self.logger.info(f"✅ sequence 변수 생성 확인: {sequence_count}개")
-            # 첫 번째 키 예시 출력
-            if sequence_count > 0:
-                first_key = list(self.variables['sequence'].keys())[0]
-                self.logger.info(f"   첫 번째 키 예시: {first_key}")
-        else:
-            self.logger.error("❌ sequence 변수가 생성되지 않았습니다!")
+        self.logger.info(f"변수 생성 완료: {len(self.variables)}개 변수 그룹")
     
     
     def _set_objective_function(self):
@@ -810,29 +705,25 @@ class ProductionOptimizer:
         # 5. 생산시간 활용률 부족 페널티 추가
         if hasattr(self.constraint_manager, 'production_underutilization_penalties'):
             total_production_underutilization_penalty = lpSum(self.constraint_manager.production_underutilization_penalties)
-            objective += 100.0 * total_production_underutilization_penalty  # 높은 페널티로 생산시간 활용률 극대화
-            self.logger.info(f"생산시간 활용률 부족 페널티 추가: {len(self.constraint_manager.production_underutilization_penalties)}개")
+            objective += 100.0 * total_production_underutilization_penalty
         
         # 6. 동적 활용률 부족 페널티 추가
         if hasattr(self.constraint_manager, 'dynamic_utilization_penalties'):
             total_dynamic_utilization_penalty = lpSum(self.constraint_manager.dynamic_utilization_penalties)
-            objective += 75.0 * total_dynamic_utilization_penalty  # 동적 활용률 페널티
-            self.logger.info(f"동적 활용률 부족 페널티 추가: {len(self.constraint_manager.dynamic_utilization_penalties)}개")
+            objective += 75.0 * total_dynamic_utilization_penalty
         
         # 7. 최대 시간 우선 할당 페널티 추가
         if hasattr(self.constraint_manager, 'max_time_priority_penalties'):
             total_max_time_priority_penalty = lpSum(self.constraint_manager.max_time_priority_penalties)
-            objective += 50.0 * total_max_time_priority_penalty  # 최대 시간 우선 할당 페널티 (높은 가중치)
-            self.logger.info(f"최대 시간 우선 할당 페널티 추가: {len(self.constraint_manager.max_time_priority_penalties)}개")
+            objective += 50.0 * total_max_time_priority_penalty
         
-        # 8. 시간 정규화 페널티 추가 (최대 가동시간 활용 강제)
+        # 8. 시간 정규화 페널티 추가
         if hasattr(self.constraint_manager, 'time_normalization_penalties'):
             total_time_normalization_penalty = lpSum(self.constraint_manager.time_normalization_penalties)
-            objective += 80.0 * total_time_normalization_penalty  # 높은 가중치로 최대 가동시간 활용 강제
-            self.logger.info(f"시간 정규화 페널티 추가: {len(self.constraint_manager.time_normalization_penalties)}개")
+            objective += 80.0 * total_time_normalization_penalty
         
         self.model += objective
-        self.logger.info("목적함수 설정 완료 (블록 단위 설계 + 소프트 제약조건 + 시간 단위 정규화)")
+        self.logger.info("목적함수 설정 완료")
     
     def solve(self, solver_name: str = "PULP_CBC_CMD") -> bool:
         """
@@ -842,10 +733,7 @@ class ProductionOptimizer:
         Returns:
             bool: 최적화 성공 여부
         """
-        self.logger.info("=== 최적화 실행 시작 ===")
-        
-        # 최적화 시작 시간 기록
-        start_time = time.time()
+        self.logger.info("최적화 실행 시작")
         
         try:
             # 솔버 설정
@@ -857,41 +745,22 @@ class ProductionOptimizer:
             # 최적화 실행
             status = self.model.solve(solver)
             
-            # 최적화 종료 시간 기록 및 소요 시간 계산
-            end_time = time.time()
-            elapsed_time = end_time - start_time
-            
-            # 소요 시간을 분과 초로 변환
-            minutes = int(elapsed_time // 60)
-            seconds = int(elapsed_time % 60)
-            
             if status == LpStatusOptimal:
-                self.logger.info("✅ 최적화 성공!")
+                self.logger.info("최적화 성공!")
                 self.logger.info(f"목적함수 값: {value(self.model.objective):.2f}")
-                self.logger.info(f"⏱️ 최적화 소요 시간: {minutes}분 {seconds}초 ({elapsed_time:.2f}초)")
                 return True
             elif status == LpStatusInfeasible:
-                self.logger.error("❌ 문제가 실행 불가능합니다 (제약조건 충돌)")
-                self.logger.info(f"⏱️ 최적화 시도 소요 시간: {minutes}분 {seconds}초 ({elapsed_time:.2f}초)")
+                self.logger.error("문제가 실행 불가능합니다 (제약조건 충돌)")
                 return False
             elif status == LpStatusUnbounded:
-                self.logger.error("❌ 문제가 무한대입니다")
-                self.logger.info(f"⏱️ 최적화 시도 소요 시간: {minutes}분 {seconds}초 ({elapsed_time:.2f}초)")
+                self.logger.error("문제가 무한대입니다")
                 return False
             else:
-                self.logger.error(f"❌ 최적화 실패: {status}")
-                self.logger.info(f"⏱️ 최적화 시도 소요 시간: {minutes}분 {seconds}초 ({elapsed_time:.2f}초)")
+                self.logger.error(f"최적화 실패: {status}")
                 return False
                 
         except Exception as e:
-            # 예외 발생 시에도 소요 시간 기록
-            end_time = time.time()
-            elapsed_time = end_time - start_time
-            minutes = int(elapsed_time // 60)
-            seconds = int(elapsed_time % 60)
-            
-            self.logger.error(f"❌ 최적화 실행 중 오류 발생: {e}")
-            self.logger.info(f"⏱️ 최적화 시도 소요 시간: {minutes}분 {seconds}초 ({elapsed_time:.2f}초)")
+            self.logger.error(f"최적화 실행 중 오류 발생: {e}")
             return False
      
     def _get_product_name(self, product_code: str) -> str:
@@ -922,7 +791,6 @@ class ProductionOptimizer:
                 return line_instance.hasTrackCount[0]
         
         # 온톨로지에서 찾지 못한 경우 기본값 반환
-        self.logger.warning(f"라인 {line}의 트랙 수를 온톨로지에서 찾을 수 없어 기본값 1 사용")
         return 1  # 기본값
 
     def _calculate_required_time_slots(self, product: str, line: str) -> int:
@@ -935,15 +803,13 @@ class ProductionOptimizer:
         products_per_box = self._get_package_count(product)
         
         if products_per_box == 0:
-            self.logger.warning(f"제품 {product}의 개입수 0, 기본값 1 사용")
             products_per_box = 1
-            
+
         production_per_hour = capacity_rate * track_count * 60 / products_per_box  # 시간당 박스
         required_hours = target_boxes / production_per_hour
         max_hours = self._get_max_working_hours(self.ontology_timeslots[0])
         required_slots = ceil(required_hours / max_hours)
         
-        self.logger.debug(f"제품 {product}, 라인 {line}: 필요 시간대 {required_slots}")
         return max(1, required_slots)  # 최소 1시간대 보장
 
     def extract_solution(self) -> Dict:
@@ -956,7 +822,7 @@ class ProductionOptimizer:
             self.logger.error("최적화가 성공하지 않았습니다")
             return {}
         
-        self.logger.info("=== 최적화 결과 추출 ===")
+        self.logger.info("최적화 결과 추출")
         
         solution = {
             'production_schedule': {},
@@ -1008,42 +874,6 @@ class ProductionOptimizer:
         # 교체 이벤트 추출 (수정된 로직)
         for line in self.lines:
             for k, time_slot in enumerate(self.ontology_timeslots):
-                # === 디버깅: 교체시간 변수 값 확인 ===
-                if line == "16" and time_slot == "월요일_야간":
-                    changeover_time_var = self.variables['changeover_time'][line, time_slot]
-                    changeover_time_value = value(changeover_time_var)
-                    self.logger.info(f"🔍 디버깅: 16호기 월요일_야간 교체시간 변수 = {changeover_time_value}")
-                    
-                    # 교체시간이 0보다 큰 경우 상세 분석
-                    if changeover_time_value > 0:
-                        self.logger.info(f"🔍 월요일_야간 교체시간 상세 분석:")
-                        
-                        # 1. changeover 변수들 확인
-                        for p1, line1 in self.valid_product_line_combinations:
-                            for p2, line2 in self.valid_product_line_combinations:
-                                if line1 == line2 == line and p1 != p2:
-                                    changeover_var = self.variables['changeover'][p1, p2, line, time_slot]
-                                    changeover_value = value(changeover_var)
-                                    if changeover_value > 0:
-                                        changeover_time_detail = self._get_changeover_time(p1, p2, line)
-                                        self.logger.info(f"  → changeover[{p1},{p2},{line},{time_slot}] = {changeover_value}")
-                                        self.logger.info(f"  → 교체시간: {p1} → {p2} = {changeover_time_detail}h")
-                        
-                        # 2. 이전 시간대와 현재 시간대 생산 제품 확인
-                        prev_time_slot = "월요일_조간"
-                        prev_productions = solution['production_schedule'][line].get(prev_time_slot, [])
-                        curr_productions = solution['production_schedule'][line].get(time_slot, [])
-                        
-                        if prev_productions and curr_productions:
-                            last_prev = prev_productions[-1]['product'] if prev_productions else "없음"
-                            first_curr = curr_productions[0]['product'] if curr_productions else "없음"
-                            self.logger.info(f"  → 제품 순서: {prev_time_slot} 마지막={last_prev}, {time_slot} 첫번째={first_curr}")
-                            
-                            # 실제 교체시간 계산
-                            if last_prev != "없음" and first_curr != "없음":
-                                actual_changeover = self._get_changeover_time(last_prev, first_curr, line)
-                                self.logger.info(f"  → 실제 교체시간: {last_prev} → {first_curr} = {actual_changeover}h")
-                
                 # 1. 같은 시간 슬롯 내에서의 교체 이벤트
                 productions = solution['production_schedule'][line].get(time_slot, [])
                 
@@ -1056,12 +886,12 @@ class ProductionOptimizer:
                         changeover_time = self._get_changeover_time(from_product, to_product, line)
                         solution['changeover_events'].append({
                             'line': line,
-                            'time_slot': time_slot,
                             'from_product': from_product,
                             'to_product': to_product,
+                            'time_slot': time_slot,
                             'changeover_time': changeover_time
                         })
-                        self.logger.info(f"교체 이벤트 추가 (같은 시간 슬롯): {from_product} → {to_product} @ {line} {time_slot} = {changeover_time}시간")
+
                 
                 # 2. 모든 연속된 시간대에서 교체 이벤트 감지
                 if k > 0:  # 첫 번째 시간대가 아닌 경우
@@ -1084,14 +914,11 @@ class ProductionOptimizer:
                                 'to_product': first_product_current,
                                 'changeover_time': changeover_time
                             })
-                            self.logger.info(f"교체 이벤트 추가 (시간대간): {last_product_previous} → {first_product_current} @ {line} {previous_time_slot} → {time_slot} = {changeover_time}시간")
+
                 
                 # 3. changeover_time 변수 확인 및 실제 교체 원인 분석
                 changeover_time = value(self.variables['changeover_time'][line, time_slot])
                 if changeover_time > 0:
-                    # 교체시간이 있는 모든 시간대에 대해 상세 분석
-                    self.logger.info(f"🔍 {line} {time_slot} 교체시간 상세 분석: {changeover_time}h")
-                    
                     # 실제 교체 변수들 확인
                     actual_changeover_found = False
                     changeover_details = []
@@ -1104,38 +931,18 @@ class ProductionOptimizer:
                                     actual_changeover_found = True
                                     changeover_time_detail = self._get_changeover_time(p1, p2, line)
                                     changeover_details.append(f"{p1} → {p2} ({changeover_time_detail}h)")
-                                    self.logger.info(f"  → changeover[{p1},{p2},{line},{time_slot}] = {changeover_var_value}")
-                                    self.logger.info(f"  → 교체시간: {p1} → {p2} = {changeover_time_detail}h")
                     
                     # 이미 추가된 교체 이벤트가 있는지 확인
                     existing_event = any(event['time_slot'] == time_slot and event['line'] == line for event in solution['changeover_events'])
                     
-                    if not existing_event:
-                        if actual_changeover_found:
-                            # 실제 교체가 발생한 경우
-                            solution['changeover_events'].append({
-                                'line': line,
-                                'time_slot': time_slot,
-                                'changeover_time': changeover_time,
-                                'details': changeover_details
-                            })
-                            self.logger.info(f"✅ 실제 교체 발생: {line} {time_slot} = {changeover_time}h ({', '.join(changeover_details)})")
-                        else:
-                            # changeover_time > 0이지만 실제 교체가 없는 경우 (버그)
-                            self.logger.warning(f"⚠️  교체시간 불일치: {line} {time_slot} = {changeover_time}h, 하지만 실제 교체 없음")
-                            # 이런 경우는 교체 이벤트에 추가하지 않음
-                            
-                            if last_prev == first_curr:
-                                self.logger.info(f"✅ 같은 제품 연속 생산 → 교체시간 0으로 수정")
-                                # 같은 제품 연속 생산시 교체시간 0으로 강제 수정
-                                changeover_time = 0
-                                # 기존 교체 이벤트에서 해당 시간대 제거
-                                solution['changeover_events'] = [
-                                    event for event in solution['changeover_events'] 
-                                    if not (event['time_slot'] == time_slot and event['line'] == line)
-                                ]
-                            else:
-                                self.logger.info(f"🔄 다른 제품 → 교체시간 {changeover_time}h 정상")
+                    if not existing_event and actual_changeover_found:
+                        # 실제 교체가 발생한 경우
+                        solution['changeover_events'].append({
+                            'line': line,
+                            'time_slot': time_slot,
+                            'changeover_time': changeover_time,
+                            'details': changeover_details
+                        })
         
         # 청소 이벤트 추출
         for line in self.lines:
@@ -1164,6 +971,12 @@ class ProductionOptimizer:
         }
         
         self.logger.info("최적화 결과 추출 완료")
+        
+        # 시간 제약조건 위반 검증
+        if hasattr(self, 'constraint_manager'):
+            violations = self.constraint_manager.verify_time_constraint_violations(self)
+            if violations > 0:
+                self.logger.error(f"시간 제약 위반 {violations}개 발견!")
         
         return solution
     

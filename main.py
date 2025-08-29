@@ -74,7 +74,7 @@ class ConstraintConflictMonitor:
         for product, target_boxes in order_data.items():
             for line in lines:
                 # 라인별 시간당 생산 능력 (박스/시간) - 실제 데이터 기반
-                hourly_capacity = self._get_line_hourly_capacity(line)
+                hourly_capacity = self._get_line_hourly_capacity(line, product)
                 
                 # 총 가용 시간 계산 (시간대 × 교대당 시간)
                 total_available_time = len(time_slots) * 10.5  # 5일 × 10.5시간
@@ -96,7 +96,32 @@ class ConstraintConflictMonitor:
                         f"제품 {product}: 목표 생산량 {target_boxes}박스가 높음 (라인 {line}, 사용률: {required_time/total_available_time*100:.1f}%)"
                     )
     
-    def _get_line_hourly_capacity(self, line_id):
+    def (self, product_code):
+        """제품별 박스당 제품 수 반환 (온톨로지 기반)"""
+        try:
+            if hasattr(self, 'ontology_manager') and self.ontology_manager:
+                onto = self.ontology_manager.onto
+                if hasattr(onto, 'Product'):
+                    # 제품 인스턴스 찾기
+                    for product_inst in onto.Product.instances():
+                        if hasattr(product_inst, 'hasProductCode') and product_inst.hasProductCode:
+                            if product_inst.hasProductCode[0] == product_code:
+                                # hasItemsPerBox 속성에서 박스당 제품 수 조회
+                                if hasattr(product_inst, 'hasItemsPerBox') and product_inst.hasItemsPerBox:
+                                    items_per_box = product_inst.hasItemsPerBox[0]
+                                    self.logger.debug(f"제품 {product_code} 박스당 제품 수: {items_per_box}")
+                                    return items_per_box
+                                break
+            
+            # 온톨로지에서 찾지 못한 경우 기본값 사용
+            self.logger.warning(f"제품 {product_code} 박스당 제품 수를 온톨로지에서 찾을 수 없어 기본값 사용")
+            return 1  # 기본값 1개/박스
+            
+        except Exception as e:
+            self.logger.error(f"제품 {product_code} 박스당 제품 수 조회 오류: {e}")
+            return 1  # 오류 시 기본값
+    
+    def _get_line_hourly_capacity(self, line_id, product_code):
         """라인별 시간당 생산 능력 반환 (온톨로지 기반)"""
         try:
             # 온톨로지에서 라인 인스턴스 조회
@@ -127,8 +152,11 @@ class ConstraintConflictMonitor:
                         if hasattr(line_instance, 'hasTrackCount') and line_instance.hasTrackCount:
                             tracks = line_instance.hasTrackCount[0]
                         
-                        # 시간당 박스 생산량 계산
-                        hourly_capacity = (ct_rate * tracks * 60) / 1  # 개입수는 1로 가정
+                        # 제품별 개입수를 고려한 계산으로 수정
+                        # 기본값 대신 실제 제품 정보를 조회해야 함
+                        products_per_box = self.(product_code)  # 제품별 개입수
+                        
+                        hourly_capacity = (ct_rate * tracks * 60) / products_per_box
                         
                         self.logger.info(f"라인 {line_id} 온톨로지 기반 생산능력: {hourly_capacity:.0f}박스/시간 (CT: {ct_rate}, 트랙: {tracks})")
                         return hourly_capacity
@@ -304,6 +332,9 @@ def main():
         onto = get_ontology("http://test.org/factory.owl")
         ontology_manager = OntologyManager(onto, monday_date=start_date.strftime('%Y-%m-%d'))
         
+        # 사용할 라인 미리 설정 (온톨로지 빌드 시 전달)
+        selected_lines = ['13', '16']
+        
         # 온톨로지 빌드 (실제 metadata 파일 사용)
         logger.info("📁 실제 데이터 파일 로딩 중...")
         logger.info("  - ../metadata/products.json")
@@ -316,7 +347,8 @@ def main():
             lines_path='../metadata/lines.json',
             changeover_path='../metadata/change_over.json',
             order_path='../metadata/order.csv',
-            start_date_str=start_date.strftime('%Y-%m-%d')
+            start_date_str=start_date.strftime('%Y-%m-%d'),
+            active_lines=selected_lines  # 활성화된 라인만 전달
         )
         
         # 데이터 구조 확인 로깅 추가
@@ -348,9 +380,9 @@ def main():
         
         # 제약조건 추가 (원래 상태로 주석 처리)
         constraint_config.add_line_constraint(
-            line_id='16',
-            constraint_type=ConstraintTypes.START_PRODUCT,
-            product='101003557'
+            line_id='13',
+            constraint_type=ConstraintTypes.LAST_PRODUCT,
+            product='101005023'
         )
     
         
@@ -360,12 +392,14 @@ def main():
         
         # 사용 가능한 라인 중에서 선택 (선택사항)
         available_lines = list(results['lines'].keys())
-        selected_lines = ['16'] 
         
         logger.info(f"선택된 라인: {selected_lines}")
         
         # 제약조건 충돌 사전 검사 (활성화된 라인만)
         logger.info("=== 2.5단계: 제약조건 충돌 사전 검사 ===")
+        
+        # ConstraintConflictMonitor에 온톨로지 매니저 설정
+        conflict_monitor.ontology_manager = ontology_manager
         
         # 온톨로지 매니저에서 order_data와 time_slots 가져오기
         order_data = ontology_manager._order_data
@@ -383,10 +417,6 @@ def main():
             constraint_config, 
             selected_lines  # 모든 라인이 아닌 선택된 라인만
         )
-        
-        optimizer = ProductionOptimizer(ontology_manager, selected_lines, logger=logger)
-        
-        logger.info(f"선택된 라인: {selected_lines}")
         
         optimizer = ProductionOptimizer(ontology_manager, selected_lines, logger=logger)
         

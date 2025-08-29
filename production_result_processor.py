@@ -179,30 +179,39 @@ class ProductionResultProcessor:
         for line, schedule in solution['production_schedule'].items():
             print(f"\n  {line}호기:")
             for time_slot, productions in schedule.items():
-                # 해당 시간대의 총 시간 계산
+                # 해당 시간대의 총 시간 계산 (검증 함수와 동일한 방식)
                 total_production_time = sum(prod['production_time'] for prod in productions)
                 
-                # 교체시간 계산
+                # 교체시간 계산 (검증 함수와 동일한 방식)
                 changeover_time = 0
                 for event in solution['changeover_events']:
                     if event['line'] == line and event['time_slot'] == time_slot:
                         changeover_time += event['changeover_time']
                 
-                # 청소시간 계산 (작업 준비 시간과 청소 시간 구분)
-                setup_time = 0
-                cleanup_time = 0
+                # 청소시간 계산 (검증 함수와 동일한 방식)
+                cleaning_time = 0
                 for event in solution['cleaning_events']:
                     if event['line'] == line and event['time_slot'] == time_slot:
-                        if time_slot == self.time_slots[0]:  # 첫 번째 시점 (월요일 조간) = 작업 준비 시간
-                            setup_time += event['cleaning_time']
-                        elif time_slot == self.time_slots[-1]:  # 마지막 시점 (금요일 야간) = 청소 시간
-                            cleanup_time += event['cleaning_time']
-                        else:
-                            cleanup_time += event['cleaning_time']  # 기타 시점은 청소 시간으로 처리
+                        cleaning_time += event['cleaning_time']
                 
-                # 총 시간 계산
-                total_time = total_production_time + changeover_time + setup_time + cleanup_time
+                # 총 시간 계산 (검증 함수와 동일: production_time + changeover_time + cleaning_time)
+                # 검증 함수에서 사용하는 정확한 계산 방식
+                total_time = total_production_time + changeover_time + cleaning_time
+                
+                # 디버깅: 검증 함수와 동일한 값인지 확인
+                self.logger.info(f"🔍 {line} {time_slot} 시간 계산:")
+                self.logger.info(f"   - 생산시간: {total_production_time:.1f}h")
+                self.logger.info(f"   - 교체시간: {changeover_time:.1f}h")
+                self.logger.info(f"   - 청소시간: {cleaning_time:.1f}h")
+                self.logger.info(f"   - 총 시간: {total_time:.1f}h")
                 max_hours = self._get_max_working_hours(time_slot)
+                
+                # 시간 제약조건 준수 여부 확인
+                if total_time > max_hours:
+                    utilization_status = f"❌ 제약 위반 ({total_time:.1f}h > {max_hours:.1f}h)"
+                else:
+                    utilization_status = f"✅ 제약 준수 ({total_time:.1f}h <= {max_hours:.1f}h)"
+                
                 utilization_rate = (total_time / max_hours * 100) if max_hours > 0 else 0
                 
                 print(f"    {time_slot}:")
@@ -211,21 +220,21 @@ class ProductionResultProcessor:
                     print(f"      - {prod['product']} ({product_name}): {prod['production_time']:.1f}시간 "
                           f"({prod['production_quantity_boxes']:.0f}박스)")
                 
-                # 시간 요약 정보 (작업 준비 시간과 청소 시간 구분)
-                if changeover_time > 0 or setup_time > 0 or cleanup_time > 0:
+                # 시간 요약 정보 (검증 함수와 동일한 방식)
+                if changeover_time > 0 or cleaning_time > 0:
                     time_components = []
                     time_components.append(f"생산: {total_production_time:.1f}h")
                     if changeover_time > 0:
                         time_components.append(f"교체: {changeover_time:.1f}h")
-                    if setup_time > 0:
-                        time_components.append(f"준비: {setup_time:.1f}h")
-                    if cleanup_time > 0:
-                        time_components.append(f"청소: {cleanup_time:.1f}h")
+                    if cleaning_time > 0:
+                        time_components.append(f"청소: {cleaning_time:.1f}h")
                     
                     time_summary = " + ".join(time_components)
                     print(f"      [시간 분석] {time_summary} = 총 {total_time:.1f}h ({utilization_rate:.1f}% 활용)")
+                    print(f"      [제약 검증] {utilization_status}")
                 else:
                     print(f"      [시간 분석] 생산: {total_production_time:.1f}h = 총 {total_time:.1f}h ({utilization_rate:.1f}% 활용)")
+                    print(f"      [제약 검증] {utilization_status}")
         
         # 교체 이벤트 상세 정보
         if solution['changeover_events']:
@@ -301,14 +310,16 @@ class ProductionResultProcessor:
         track_count = self._get_track_count(line)  # 트랙 수
         return ct_rate * track_count * 60  # 분당 → 시간당 변환 (트랙 수 포함)
     
-    def _get_changeover_type(self, from_product: str, to_product: str) -> str:
+    def _get_changeover_type(self, from_product: str, to_product: str, line: str = None) -> str:
         """교체 유형 판단 (일반교체 또는 청소교체)"""
         # 청소가 필요한 교체인지 확인하는 로직
         # 실제 구현에서는 제품 카테고리나 특성에 따라 판단
         
-        # 기본 라인 사용 (첫 번째 활성 라인)
-        default_line = self.lines[0] if self.lines else '16'
-        changeover_time = self._get_changeover_time(from_product, to_product, default_line)
+        # 라인 정보가 제공되지 않은 경우에만 기본 라인 사용
+        if line is None:
+            line = self.lines[0] if self.lines else '16'
+        
+        changeover_time = self._get_changeover_time(from_product, to_product, line)
         
         # 교체시간이 긴 경우 청소교체로 판단 (임계값은 조정 가능)
         if changeover_time > 2.0:  # 2시간 이상이면 청소교체
@@ -537,7 +548,7 @@ class ProductionResultProcessor:
                     "from_product_name": self._get_product_name(from_product),
                     "to_product_code": to_product,
                     "to_product_name": self._get_product_name(to_product),
-                    "changeover_type": self._get_changeover_type(from_product, to_product)
+                    "changeover_type": self._get_changeover_type(from_product, to_product, event['line'])
                 })
             else:
                 # 제품 정보가 없는 경우 (일반적인 교체시간만 있는 경우)

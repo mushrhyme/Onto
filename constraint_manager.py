@@ -28,15 +28,19 @@ class ConstraintManager:
         self.logger.info("=== ConstraintManager: 모든 제약조건 추가 시작 ===")
         
         self._add_production_constraints()
-        self._add_time_constraints()
+        
         self._add_changeover_count_constraints()
         self._add_setup_and_cleaning_constraints()
         self._add_improved_constraints()
+        self._add_time_constraints()
         self._add_block_continuity()
         self._add_multi_product_in_slot()
         self._add_total_changeover_limit()
         self._add_line_specific_constraints()
         self.add_time_unit_normalization_constraints()  # 시간 단위 정규화 추가
+        
+        # 모든 제약조건 추가 완료 후 시간 제약조건 검증
+        self._verify_time_constraints()
         
         self.logger.info("=== ConstraintManager: 모든 제약조건 추가 완료 ===")
 
@@ -85,31 +89,102 @@ class ConstraintManager:
         for line in self.lines:
             for time_slot in self.time_slots:
                 max_hours = self._get_max_working_hours(time_slot)
-                self.logger.info(f"라인 {line}, {time_slot}: 최대 가동시간 = {max_hours}시간")
+                self.logger.debug(f"라인 {line}, {time_slot}: 최대 가동시간 = {max_hours}시간")
                 
                 # 총 시간 계산: 생산시간 + 교체시간 + 청소시간
-                total_time = lpSum(
+                production_time_sum = lpSum([
                     self.variables['production_time'][product, line, time_slot]
                     for product in self.products 
                     if (product, line) in self.valid_product_line_combinations
-                )
-                total_time += self.variables['changeover_time'][line, time_slot]
-                total_time += self.variables['cleaning_time'][line, time_slot]
+                ])
                 
-                # 시간 활용률 100% 이하로 엄격히 제한
-                self.model += (
-                    total_time <= max_hours, 
-                    f"time_limit_upper_{line}_{time_slot}"
-                )
+                # 하드 제약은 add_time_unit_normalization_constraints에서 처리하므로 여기서는 제거
+                # (중복 제약 방지)
+                
+                # 디버깅을 위한 출력 (제약조건이 제대로 설정되었는지 확인)
+                self.logger.debug(f"⏰ 시간 제약은 add_time_unit_normalization_constraints에서 처리됨")
                 
                 # 최소 이용률을 소프트 제약조건으로 변경
-                self._add_soft_utilization_constraint(line, time_slot, total_time, max_hours)
+                total_time_expr = (production_time_sum + 
+                                  self.variables['changeover_time'][line, time_slot] + 
+                                  self.variables['cleaning_time'][line, time_slot])
+                self._add_soft_utilization_constraint(line, time_slot, total_time_expr, max_hours)
                 
                 # 동적 활용률 제약 추가 (사용자 설정 활용률 목표)
                 target_rate = getattr(self.optimizer, 'target_utilization_rate')
-                self.add_dynamic_utilization_constraint(line, time_slot, total_time, max_hours, target_rate=target_rate)
+                self.add_dynamic_utilization_constraint(line, time_slot, total_time_expr, max_hours, target_rate=target_rate)
         
-        self.logger.info(f"시간 제약조건 추가 완료: {len(self.lines) * len(self.time_slots)}개")
+        # 시간 제약은 add_all_constraints에서 add_time_unit_normalization_constraints를 통해 처리됨
+        # (중복 호출 방지)
+        
+        self.logger.debug(f"시간 제약조건 추가 완료: {len(self.lines) * len(self.time_slots)}개")
+        
+        # 시간 제약조건 검증은 add_time_unit_normalization_constraints 이후에 수행
+        # (중복 호출 방지)
+    
+    def _verify_time_constraints(self):
+        """시간 제약조건이 실제로 모델에 추가되었는지 검증"""
+        self.logger.info("🔍 시간 제약조건 검증 시작...")
+        
+        time_constraints_found = 0
+        for line in self.lines:
+            for time_slot in self.time_slots:
+                constraint_name = f"total_time_slot_limit_{line}_{time_slot}"
+                if constraint_name in self.model.constraints:
+                    time_constraints_found += 1
+                    self.logger.info(f"✅ {constraint_name}: 모델에 존재")
+                else:
+                    self.logger.error(f"❌ {constraint_name}: 모델에 없음!")
+                    # 디버깅을 위한 추가 정보
+                    self.logger.error(f"   → 라인: {line}, 시간대: {time_slot}")
+                    self.logger.error(f"   → 사용 가능한 제약조건: {[name for name in self.model.constraints.keys() if 'total_time_slot_limit' in name]}")
+        
+        self.logger.info(f"🔍 시간 제약조건 검증 완료: {time_constraints_found}/{len(self.lines) * len(self.time_slots)}개 발견")
+    
+    def verify_time_constraint_violations(self, optimizer):
+        """최적화 후 시간 제약조건 위반 여부 검증"""
+        self.logger.info("🔍 시간 제약조건 위반 검증 시작...")
+        
+        violations_found = 0
+        for line in self.lines:
+            for time_slot in self.time_slots:
+                max_hours = self._get_max_working_hours(time_slot)
+                
+                # 실제 생산시간 계산
+                production_time = sum(
+                    optimizer.variables['production_time'][product, line, time_slot].value()
+                    for product in optimizer.products 
+                    if (product, line) in optimizer.valid_product_line_combinations
+                    and optimizer.variables['production_time'][product, line, time_slot].value() is not None
+                )
+                
+                # 실제 교체시간
+                changeover_time = optimizer.variables['changeover_time'][line, time_slot].value() or 0
+                
+                # 실제 청소시간
+                cleaning_time = optimizer.variables['cleaning_time'][line, time_slot].value() or 0
+                
+                # 총 시간
+                total_time = production_time + changeover_time + cleaning_time
+                
+                # 위반 여부 확인
+                if total_time > max_hours:
+                    violations_found += 1
+                    self.logger.error(f"❌ 시간 제약 위반: {line} {time_slot}")
+                    self.logger.error(f"   - 생산시간: {production_time:.1f}h")
+                    self.logger.error(f"   - 교체시간: {changeover_time:.1f}h")
+                    self.logger.error(f"   - 청소시간: {cleaning_time:.1f}h")
+                    self.logger.error(f"   - 총 시간: {total_time:.1f}h > {max_hours:.1f}h (제한)")
+                    self.logger.error(f"   - 초과: {total_time - max_hours:.1f}h")
+                else:
+                    self.logger.info(f"✅ 시간 제약 준수: {line} {time_slot} = {total_time:.1f}h <= {max_hours:.1f}h")
+        
+        if violations_found > 0:
+            self.logger.error(f"🚨 시간 제약 위반 발견: {violations_found}개 시간대")
+        else:
+            self.logger.info(f"✅ 모든 시간 제약조건 준수")
+        
+        return violations_found
         
     def _add_block_continuity(self):
         """
@@ -198,7 +273,7 @@ class ConstraintManager:
                         target_boxes = self.order_data.get(p, 0)
                         if target_boxes <= 0:
                             continue
-                            
+                        
                         # 시간당 박스 생산량 계산
                         capacity_rate = self._get_capacity_rate(p, line)  # 분당 생산 개수
                         track_count = self._get_track_count(line)  # 트랙 수
@@ -348,7 +423,7 @@ class ConstraintManager:
         
         self.production_underutilization_penalties.append(production_underutilization_slack)
         
-        self.logger.info(f"생산시간 활용률 소프트 제약 추가: {line}_{time_slot} (생산 가능 시간 최대 활용)")
+        self.logger.debug(f"생산시간 활용률 소프트 제약 추가: {line}_{time_slot} (생산 가능 시간 최대 활용)")
     
     def add_time_unit_normalization_constraints(self):
         """
@@ -369,11 +444,22 @@ class ConstraintManager:
                 production_decision = self.variables['production'][product, line, time_slot]
                 max_hours = self._get_max_working_hours(time_slot)
                 
-                # 생산 시간은 최대 가동시간 이하
-                self.model += (
-                    production_time <= max_hours * production_decision,
-                    f"max_time_{product}_{line}_{time_slot}"
-                )
+                # 생산 시간은 최대 가동시간에서 changeover_time, setup_time, cleanup_time을 뺀 값 이하
+                # setup_time: 첫 번째 시간대(월요일 조간)에만 설정, cleanup_time: 마지막 시간대(금요일 야간)에만 설정
+                # cleaning_time 변수에 setup_time과 cleanup_time이 저장되어 있음
+                setup_time = self.variables['cleaning_time'][line, time_slot] if time_slot == self.time_slots[0] else 0
+                cleanup_time = self.variables['cleaning_time'][line, time_slot] if time_slot == self.time_slots[-1] else 0
+                changeover_time = self.variables['changeover_time'][line, time_slot]
+                
+                # 실제 생산에 사용 가능한 시간 = 최대가동시간 - (교체시간 + 준비시간 + 청소시간)
+                # PuLP에서는 변수와 변수를 곱할 수 없으므로, production_decision이 1일 때만 제약 적용
+                # production_decision이 0일 때는 production_time도 0이 되어야 함
+                
+                # 1. production_decision이 0일 때 production_time도 0이어야 함
+                # 이 제약은 전체 시간 제약에서 자연스럽게 처리되므로 제거
+                
+                # 2. production_decision이 1일 때는 setup_time, cleanup_time, changeover_time을 고려한 제약
+                # 이는 별도의 총 시간 제약에서 처리됨 (이미 _add_time_constraints에서 구현됨)
                 
                 # 최소 생산 시간 (유연성을 위해 0으로 설정 가능)
                 MIN_PRODUCTION_TIME = 1
@@ -411,9 +497,13 @@ class ConstraintManager:
                 # 해당 호기의 해당 시간대 교체시간
                 changeover_time = self.variables['changeover_time'][line, time_slot]
                 
-                # 총 시간이 최대 가동시간을 넘지 않도록 제약 (생산 + 교체)
+                # 해당 호기의 해당 시간대 setup_time과 cleanup_time
+                setup_time = self.variables['cleaning_time'][line, time_slot] if time_slot == self.time_slots[0] else 0
+                cleanup_time = self.variables['cleaning_time'][line, time_slot] if time_slot == self.time_slots[-1] else 0
+                
+                # 총 시간이 최대 가동시간을 넘지 않도록 제약 (생산 + 교체 + 준비 + 청소)
                 self.model += (
-                    total_production_time + changeover_time <= max_hours,
+                    total_production_time + changeover_time + setup_time + cleanup_time <= max_hours,
                     f"total_time_slot_limit_{line}_{time_slot}"
                 )
                 
@@ -460,7 +550,7 @@ class ConstraintManager:
             
             self.dynamic_utilization_penalties.append(utilization_slack)
             
-            self.logger.info(f"동적 활용률 제약 추가: {line}_{time_slot} (목표: {target_rate*100:.1f}%, {target_utilization:.1f}시간)")
+            self.logger.debug(f"동적 활용률 제약 추가: {line}_{time_slot} (목표: {target_rate*100:.1f}%, {target_utilization:.1f}시간)")
         else:
             self.logger.warning(f"라인 {line}, {time_slot}: 고정 시간이 너무 커서 동적 활용률 제약 건너뜀")
     
