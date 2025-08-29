@@ -96,7 +96,7 @@ class ConstraintConflictMonitor:
                         f"제품 {product}: 목표 생산량 {target_boxes}박스가 높음 (라인 {line}, 사용률: {required_time/total_available_time*100:.1f}%)"
                     )
     
-    def (self, product_code):
+    def _get_package_count(self, product_code):
         """제품별 박스당 제품 수 반환 (온톨로지 기반)"""
         try:
             if hasattr(self, 'ontology_manager') and self.ontology_manager:
@@ -154,7 +154,7 @@ class ConstraintConflictMonitor:
                         
                         # 제품별 개입수를 고려한 계산으로 수정
                         # 기본값 대신 실제 제품 정보를 조회해야 함
-                        products_per_box = self.(product_code)  # 제품별 개입수
+                        products_per_box = self._get_package_count(product_code)  # 제품별 개입수
                         
                         hourly_capacity = (ct_rate * tracks * 60) / products_per_box
                         
@@ -384,6 +384,12 @@ def main():
             constraint_type=ConstraintTypes.LAST_PRODUCT,
             product='101005023'
         )
+
+        constraint_config.add_line_constraint(
+            line_id='16',
+            constraint_type=ConstraintTypes.LAST_PRODUCT,
+            product='101003558'
+        )
     
         
         # 3. 최적화 모델 구축
@@ -501,8 +507,14 @@ def main():
             json_output_path = os.path.join(results_dir, f"production_schedule_detail_{timestamp}.json")
             result_processor.export_to_json(solution, json_output_path)
             
+            # Optimizer 정보를 JSON으로 저장 (새로 추가)
+            logger.info("🔍 Optimizer 정보 JSON 파일 생성 중...")
+            optimizer_info_path = os.path.join(results_dir, f"optimizer_info_{timestamp}.json")
+            result_processor.export_optimizer_info(optimizer_info_path)
+            
             logger.info(f"📊 Excel 파일 생성: {excel_output_path}")
             logger.info(f"📄 JSON 파일 생성: {json_output_path}")
+            logger.info(f"🔍 Optimizer 정보 JSON 생성: {optimizer_info_path}")
             
             result_end_time = time.time()
             result_elapsed = result_end_time - result_start_time
@@ -511,6 +523,7 @@ def main():
             logger.info(f"✅ 최적화 완료! (v5 파일 분리 구조)")
             logger.info(f"   📊 Excel 파일: {excel_output_path}")
             logger.info(f"   📄 JSON 파일: {json_output_path}")
+            logger.info(f"   🔍 Optimizer 정보 JSON: {optimizer_info_path}")
             logger.info(f"   🔄 결과 처리기: ProductionResultProcessor 사용")
         else:
             logger.error("❌ 최적화 실패")

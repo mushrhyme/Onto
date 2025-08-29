@@ -6,6 +6,7 @@ import pandas as pd
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 from openpyxl.utils.dataframe import dataframe_to_rows
+import json  # JSON 저장을 위해 추가
 
 class ProductionResultProcessor:
     """
@@ -35,6 +36,192 @@ class ProductionResultProcessor:
         self._get_changeover_time = optimizer._get_changeover_time
         self._get_setup_time = optimizer._get_setup_time
         self._get_max_working_hours = optimizer._get_max_working_hours
+
+    def export_optimizer_info(self, file_path: str):
+        """
+        optimizer의 모든 정보를 JSON 파일로 저장
+        Args:
+            file_path: str, 저장할 JSON 파일 경로
+        """
+        self.logger.info(f"🔍 Optimizer 정보를 JSON으로 저장 중: {file_path}")
+        
+        try:
+            # optimizer의 핵심 정보들을 수집
+            optimizer_info = {
+                # 기본 설정 정보
+                'basic_config': {
+                    'target_utilization_rate': self.optimizer.target_utilization_rate,
+                    'weights': self.optimizer.weights,
+                    'active_lines': getattr(self.optimizer, 'lines', []),
+                    'timestamp': datetime.datetime.now().isoformat()
+                },
+                
+                # 데이터 구조 정보
+                'data_structure': {
+                    'products': self.products,
+                    'lines': self.lines,
+                    'ontology_timeslots': self.time_slots,
+                    'valid_product_line_combinations': self.valid_product_line_combinations,
+                    'total_products': len(self.products),
+                    'total_lines': len(self.lines),
+                    'total_timeslots': len(self.time_slots),
+                    'total_valid_combinations': len(self.valid_product_line_combinations)
+                },
+                
+                # 주문 데이터
+                'order_data': self.order_data,
+                
+                # 제품-라인 관계 정보
+                'line_product_relations': self._extract_line_product_relations(),
+                
+                # 교체 규칙 정보
+                'changeover_rules': self._extract_changeover_rules(),
+                
+                # 제약조건 정보
+                'constraints': self._extract_constraints_info(),
+                
+                # 온톨로지 메타데이터
+                'ontology_metadata': self._extract_ontology_metadata()
+            }
+            
+            # JSON 파일로 저장
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(optimizer_info, f, ensure_ascii=False, indent=2, default=str)
+            
+            self.logger.info(f"✅ Optimizer 정보 저장 완료: {file_path}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"❌ Optimizer 정보 저장 실패: {e}")
+            return False
+    
+    def _extract_line_product_relations(self):
+        """라인-제품 관계 정보 추출"""
+        relations = {}
+        try:
+            for line in self.lines:
+                relations[line] = {}
+                for product in self.products:
+                    # CT Rate 정보
+                    ct_rate = self._get_capacity_rate(product, line)
+                    # 트랙 수 정보
+                    track_count = self._get_track_count(line)
+                    # 패키지 수 정보
+                    package_count = self._get_package_count(product)
+                    
+                    relations[line][product] = {
+                        'capacity_rate': ct_rate,  # 분당 생산 개수
+                        'track_count': track_count,  # 트랙 수
+                        'package_count': package_count,  # 박스당 제품 수
+                        'hourly_capacity_boxes': (ct_rate * track_count * 60 / package_count) if package_count > 0 else 0  # 시간당 박스 생산량
+                    }
+        except Exception as e:
+            self.logger.warning(f"라인-제품 관계 정보 추출 중 오류: {e}")
+        
+        return relations
+    
+    def _extract_changeover_rules(self):
+        """교체 규칙 정보 추출"""
+        changeover_info = {}
+        try:
+            if hasattr(self.optimizer, 'changeover_rules'):
+                for line, rules in self.optimizer.changeover_rules.items():
+                    changeover_info[line] = []
+                    for rule in rules:
+                        rule_info = {
+                            'rule_id': rule.name,
+                            'from_product': None,
+                            'to_product': None,
+                            'changeover_time': None,
+                            'setup_time': None,
+                            'cleaning_time': None,
+                            'description': None,
+                            'rule_type': None
+                        }
+                        
+                        # 규칙의 속성들 추출 (실제 온톨로지 속성명에 맞춤)
+                        if hasattr(rule, 'hasFromCondition') and rule.hasFromCondition:
+                            rule_info['from_product'] = rule.hasFromCondition[0]
+                        if hasattr(rule, 'hasToCondition') and rule.hasToCondition:
+                            rule_info['to_product'] = rule.hasToCondition[0]
+                        if hasattr(rule, 'hasChangeoverTimeValue') and rule.hasChangeoverTimeValue:
+                            rule_info['changeover_time'] = rule.hasChangeoverTimeValue[0]
+                        if hasattr(rule, 'hasRuleDescription') and rule.hasRuleDescription:
+                            rule_info['description'] = rule.hasRuleDescription[0]
+                        if hasattr(rule, 'hasRuleType') and rule.hasRuleType:
+                            rule_info['rule_type'] = rule.hasRuleType[0]
+                        
+                        changeover_info[line].append(rule_info)
+        except Exception as e:
+            self.logger.warning(f"교체 규칙 정보 추출 중 오류: {e}")
+        
+        return changeover_info
+    
+    def _extract_constraints_info(self):
+        """제약조건 정보 추출"""
+        constraints_info = {}
+        try:
+            if hasattr(self.optimizer, 'line_constraints'):
+                line_constraints = self.optimizer.line_constraints
+                if hasattr(line_constraints, 'get_all_constrained_lines'):
+                    constrained_lines = line_constraints.get_all_constrained_lines()
+                    for line_id in constrained_lines:
+                        constraints_info[line_id] = []
+                        if hasattr(line_constraints, 'get_line_constraints'):
+                            line_consts = line_constraints.get_line_constraints(line_id)
+                            for constraint in line_consts:
+                                constraints_info[line_id].append({
+                                    'type': constraint.get('type', 'UNKNOWN'),
+                                    'product': constraint.get('product', 'UNKNOWN'),
+                                    'details': constraint
+                                })
+        except Exception as e:
+            self.logger.warning(f"제약조건 정보 추출 중 오류: {e}")
+        
+        return constraints_info
+    
+    def _extract_ontology_metadata(self):
+        """온톨로지 메타데이터 추출"""
+        metadata = {}
+        try:
+            # 제품 인스턴스 정보
+            metadata['product_instances'] = {}
+            for product_code, instance in self.product_instances.items():
+                product_info = {
+                    'name': getattr(instance, 'name', 'UNKNOWN'),
+                    'code': product_code
+                }
+                
+                # 제품 속성들 추출
+                if hasattr(instance, 'hasProductName') and instance.hasProductName:
+                    product_info['product_name'] = instance.hasProductName[0]
+                if hasattr(instance, 'hasProductCode') and instance.hasProductCode:
+                    product_info['product_code'] = instance.hasProductCode[0]
+                if hasattr(instance, 'hasPackageCount') and instance.hasPackageCount:
+                    product_info['package_count'] = instance.hasPackageCount[0]
+                
+                metadata['product_instances'][product_code] = product_info
+            
+            # 라인 인스턴스 정보
+            metadata['line_instances'] = {}
+            for line_id, instance in self.line_instances.items():
+                line_info = {
+                    'name': getattr(instance, 'name', 'UNKNOWN'),
+                    'id': line_id
+                }
+                
+                # 라인 속성들 추출
+                if hasattr(instance, 'hasTrackCount') and instance.hasTrackCount:
+                    line_info['track_count'] = instance.hasTrackCount[0]
+                if hasattr(instance, 'hasMaxWorkingHours') and instance.hasMaxWorkingHours:
+                    line_info['max_working_hours'] = instance.hasMaxWorkingHours[0]
+                
+                metadata['line_instances'][line_id] = line_info
+                
+        except Exception as e:
+            self.logger.warning(f"온톨로지 메타데이터 추출 중 오류: {e}")
+        
+        return metadata
 
     def print_solution(self, solution: Dict):
         """
@@ -198,12 +385,7 @@ class ProductionResultProcessor:
                 # 검증 함수에서 사용하는 정확한 계산 방식
                 total_time = total_production_time + changeover_time + cleaning_time
                 
-                # 디버깅: 검증 함수와 동일한 값인지 확인
-                self.logger.info(f"🔍 {line} {time_slot} 시간 계산:")
-                self.logger.info(f"   - 생산시간: {total_production_time:.1f}h")
-                self.logger.info(f"   - 교체시간: {changeover_time:.1f}h")
-                self.logger.info(f"   - 청소시간: {cleaning_time:.1f}h")
-                self.logger.info(f"   - 총 시간: {total_time:.1f}h")
+                # 
                 max_hours = self._get_max_working_hours(time_slot)
                 
                 # 시간 제약조건 준수 여부 확인
